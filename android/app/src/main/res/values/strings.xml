@@ -14,4 +14,5 @@
     <string name="status_ready">Ready</string>
     <string name="status_receiving">Receiving…</string>
     <string name="ble_permission_rationale">Bluetooth permission is required to scan and connect to tags.</string>
+    <string name="scanning_for_tags">Scanning for Tag devices…\n\nMake sure the tag is powered on and nearby.</string>
 </resources>

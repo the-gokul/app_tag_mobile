@@ -10,8 +10,10 @@ import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
+import android.bluetooth.le.ScanSettings
 import android.content.Context
 import android.os.Build
+import android.os.ParcelUuid
 import com.nordic.tagmobile.protocol.TagCommand
 import com.nordic.tagmobile.protocol.TagUuids
 import java.util.UUID
@@ -19,7 +21,7 @@ import java.util.UUID
 class TagBleManager(context: Context) {
 
     interface Listener {
-        fun onScanResult(device: BluetoothDevice, rssi: Int) {}
+        fun onScanResult(device: BluetoothDevice, rssi: Int, displayName: String) {}
         fun onConnected(device: BluetoothDevice) {}
         fun onDisconnected() {}
         fun onPacketReceived(data: ByteArray) {}
@@ -46,12 +48,25 @@ class TagBleManager(context: Context) {
 
     val isConnected: Boolean get() = gatt != null && commandChar != null
 
+    private val streamServiceParcel = ParcelUuid(streamServiceUuid)
+
+    private fun isTagAdvertisement(result: ScanResult): Boolean {
+        val name = result.scanRecord?.deviceName ?: result.device.name
+        if (!name.isNullOrBlank() && name.startsWith("Tag", ignoreCase = true)) {
+            return true
+        }
+        val uuids = result.scanRecord?.serviceUuids ?: return false
+        return uuids.any { it == streamServiceParcel }
+    }
+
     private val scanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
             val device = result.device ?: return
-            val name = device.name ?: return
-            if (!name.startsWith("Tag", ignoreCase = true)) return
-            listener?.onScanResult(device, result.rssi)
+            if (!isTagAdvertisement(result)) return
+            val displayName = result.scanRecord?.deviceName
+                ?: result.device.name
+                ?: "Tag"
+            listener?.onScanResult(device, result.rssi, displayName)
         }
 
         override fun onScanFailed(errorCode: Int) {
@@ -123,7 +138,19 @@ class TagBleManager(context: Context) {
 
     @SuppressLint("MissingPermission")
     fun startScan() {
-        adapter?.bluetoothLeScanner?.startScan(scanCallback)
+        val scanner = adapter?.bluetoothLeScanner ?: run {
+            listener?.onError("Bluetooth scanner unavailable")
+            return
+        }
+        val settings = ScanSettings.Builder()
+            .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+            .apply {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    setPhy(ScanSettings.SCAN_PHY_LE_ALL_SUPPORTED)
+                }
+            }
+            .build()
+        scanner.startScan(null, settings, scanCallback)
     }
 
     @SuppressLint("MissingPermission")

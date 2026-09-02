@@ -35,12 +35,28 @@
                 android:layout_marginStart="4dp" />
         </LinearLayout>
 
-        <androidx.recyclerview.widget.RecyclerView
-            android:id="@+id/deviceList"
+        <FrameLayout
             android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:padding="12dp"
-            android:clipToPadding="false" />
+            android:layout_height="match_parent">
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/deviceList"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:padding="12dp"
+                android:clipToPadding="false" />
+
+            <TextView
+                android:id="@+id/emptyScanState"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center"
+                android:gravity="center"
+                android:padding="32dp"
+                android:text="@string/scanning_for_tags"
+                android:textColor="#6B7280"
+                android:textSize="15sp" />
+        </FrameLayout>
     </LinearLayout>
 
     <FrameLayout

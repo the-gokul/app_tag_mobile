@@ -1,8 +1,11 @@
 package com.nordic.tagmobile
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothDevice
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
@@ -10,6 +13,7 @@ import android.view.ViewGroup
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.nordic.tagmobile.ble.TagBleManager
@@ -23,13 +27,18 @@ class ScannerActivity : AppCompatActivity() {
     private val adapter = DeviceAdapter { device, rssi -> connectTo(device, rssi) }
     private val seen = LinkedHashMap<String, ScanEntry>()
 
-    private data class ScanEntry(val device: BluetoothDevice, val rssi: Int)
+    private data class ScanEntry(
+        val device: BluetoothDevice,
+        val rssi: Int,
+        val displayName: String,
+    )
 
     private val bleListener = object : TagBleManager.Listener {
-        override fun onScanResult(device: BluetoothDevice, rssi: Int) {
+        override fun onScanResult(device: BluetoothDevice, rssi: Int, displayName: String) {
             runOnUiThread {
-                seen[device.address] = ScanEntry(device, rssi)
+                seen[device.address] = ScanEntry(device, rssi, displayName)
                 adapter.submit(seen.values.toList())
+                binding.emptyScanState.visibility = View.GONE
             }
         }
 
@@ -70,9 +79,31 @@ class ScannerActivity : AppCompatActivity() {
         binding.deviceList.layoutManager = LinearLayoutManager(this)
         binding.deviceList.adapter = adapter
 
+        if (!hasBlePermissions()) {
+            Toast.makeText(this, R.string.ble_permission_rationale, Toast.LENGTH_LONG).show()
+            finish()
+            return
+        }
+
         bleManager.listener = bleListener
         bleManager.startScan()
     }
+
+    private fun hasBlePermissions(): Boolean =
+        requiredPermissions().all {
+            ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
+        }
+
+    private fun requiredPermissions(): Array<String> =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
+        } else {
+            arrayOf(
+                Manifest.permission.ACCESS_FINE_LOCATION,
+                Manifest.permission.BLUETOOTH,
+                Manifest.permission.BLUETOOTH_ADMIN,
+            )
+        }
 
     override fun onDestroy() {
         bleManager.stopScan()
@@ -84,7 +115,7 @@ class ScannerActivity : AppCompatActivity() {
         binding.connectingOverlay.visibility = View.VISIBLE
         bleManager.stopScan()
         bleManager.connect(device)
-        seen[device.address] = ScanEntry(device, rssi)
+        seen[device.address] = ScanEntry(device, rssi, device.name ?: "Tag")
     }
 
     private class DeviceAdapter(
@@ -106,7 +137,7 @@ class ScannerActivity : AppCompatActivity() {
 
         override fun onBindViewHolder(holder: Holder, position: Int) {
             val item = items[position]
-            holder.name.text = item.device.name ?: "Unknown"
+            holder.name.text = item.displayName
             holder.mac.text = item.device.address
             holder.rssi.text = "${item.rssi} dBm"
             holder.itemView.setOnClickListener { onClick(item.device, item.rssi) }
