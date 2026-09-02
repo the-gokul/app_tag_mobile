@@ -26,18 +26,6 @@ class ScannerActivity : AppCompatActivity() {
     private val adapter = DeviceAdapter { device, rssi -> connectTo(device, rssi) }
     private val seen = LinkedHashMap<String, ScanEntry>()
 
-    private val permissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions(),
-    ) { grants ->
-        if (AppPermissions.ble().all { grants[it] == true }) {
-            bleManager.listener = bleListener
-            bleManager.startScan()
-        } else {
-            Toast.makeText(this, R.string.ble_permission_rationale, Toast.LENGTH_LONG).show()
-            finish()
-        }
-    }
-
     private data class ScanEntry(
         val device: BluetoothDevice,
         val rssi: Int,
@@ -78,6 +66,18 @@ class ScannerActivity : AppCompatActivity() {
                 binding.connectingOverlay.visibility = View.GONE
                 Toast.makeText(this@ScannerActivity, message, Toast.LENGTH_SHORT).show()
             }
+        }
+    }
+
+    private val permissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { grants ->
+        if (AppPermissions.ble().all { grants[it] == true }) {
+            bleManager.listener = bleListener
+            bleManager.startScan()
+        } else {
+            Toast.makeText(this, R.string.ble_permission_rationale, Toast.LENGTH_LONG).show()
+            finish()
         }
     }
 
