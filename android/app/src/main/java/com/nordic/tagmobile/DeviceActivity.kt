@@ -29,25 +29,27 @@ class DeviceActivity : AppCompatActivity() {
         if (uri == null || csv == null) {
             TagSession.recordingState = RecordingState.RECEIVED
             updateRecordingUi()
-            return
-        }
-        try {
-            contentResolver.openOutputStream(uri)?.use { it.write(csv.toByteArray(Charsets.UTF_8)) }
-            val bytes = csv.toByteArray(Charsets.UTF_8).size
-            Toast.makeText(
-                this,
-                "Saved ${name ?: "file.csv"} (${CsvExporter.formatFileSize(bytes)})",
-                Toast.LENGTH_LONG,
-            ).show()
-            TagSession.resetRecording()
-            updateRecordingUi()
-        } catch (e: Exception) {
-            Toast.makeText(this, "Save failed: ${e.message}", Toast.LENGTH_LONG).show()
-            TagSession.recordingState = RecordingState.RECEIVED
-            updateRecordingUi()
-        } finally {
-            pendingCsv = null
-            pendingFileName = null
+        } else {
+            try {
+                contentResolver.openOutputStream(uri)?.use {
+                    it.write(csv.toByteArray(Charsets.UTF_8))
+                }
+                val bytes = csv.toByteArray(Charsets.UTF_8).size
+                Toast.makeText(
+                    this,
+                    "Saved ${name ?: "file.csv"} (${CsvExporter.formatFileSize(bytes)})",
+                    Toast.LENGTH_LONG,
+                ).show()
+                TagSession.resetRecording()
+                updateRecordingUi()
+            } catch (e: Exception) {
+                Toast.makeText(this, "Save failed: ${e.message}", Toast.LENGTH_LONG).show()
+                TagSession.recordingState = RecordingState.RECEIVED
+                updateRecordingUi()
+            } finally {
+                pendingCsv = null
+                pendingFileName = null
+            }
         }
     }
 
