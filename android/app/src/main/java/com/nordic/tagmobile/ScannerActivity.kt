@@ -1,17 +1,16 @@
 package com.nordic.tagmobile
 
-import android.Manifest
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothDevice
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.os.Build
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -26,6 +25,18 @@ class ScannerActivity : AppCompatActivity() {
     private val bleManager get() = TagApp.instance.bleManager
     private val adapter = DeviceAdapter { device, rssi -> connectTo(device, rssi) }
     private val seen = LinkedHashMap<String, ScanEntry>()
+
+    private val permissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { grants ->
+        if (AppPermissions.ble().all { grants[it] == true }) {
+            bleManager.listener = bleListener
+            bleManager.startScan()
+        } else {
+            Toast.makeText(this, R.string.ble_permission_rationale, Toast.LENGTH_LONG).show()
+            finish()
+        }
+    }
 
     private data class ScanEntry(
         val device: BluetoothDevice,
@@ -80,8 +91,11 @@ class ScannerActivity : AppCompatActivity() {
         binding.deviceList.adapter = adapter
 
         if (!hasBlePermissions()) {
-            Toast.makeText(this, R.string.ble_permission_rationale, Toast.LENGTH_LONG).show()
-            finish()
+            permissionLauncher.launch(
+                AppPermissions.ble().filter {
+                    ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+                }.toTypedArray(),
+            )
             return
         }
 
@@ -90,19 +104,8 @@ class ScannerActivity : AppCompatActivity() {
     }
 
     private fun hasBlePermissions(): Boolean =
-        requiredPermissions().all {
+        AppPermissions.ble().all {
             ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
-        }
-
-    private fun requiredPermissions(): Array<String> =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
-        } else {
-            arrayOf(
-                Manifest.permission.ACCESS_FINE_LOCATION,
-                Manifest.permission.BLUETOOTH,
-                Manifest.permission.BLUETOOTH_ADMIN,
-            )
         }
 
     override fun onDestroy() {
