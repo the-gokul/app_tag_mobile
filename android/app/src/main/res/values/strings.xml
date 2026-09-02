@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Tag</string>
+    <string name="home_title">Tag</string>
+    <string name="no_devices">No connected devices</string>
+    <string name="connect_hint">Connect a device to get started.</string>
+    <string name="scan">Scan</string>
+    <string name="connecting">Connecting…</string>
+    <string name="connected">Connected</string>
+    <string name="disconnect">Disconnect</string>
+    <string name="start">Start</string>
+    <string name="stop">Stop</string>
+    <string name="save">Save</string>
+    <string name="status_ready">Ready</string>
+    <string name="status_receiving">Receiving…</string>
+    <string name="ble_permission_rationale">Bluetooth permission is required to scan and connect to tags.</string>
+</resources>
