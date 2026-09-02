@@ -146,7 +146,9 @@ class TagBleManager(context: Context) {
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
             .apply {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    setPhy(ScanSettings.SCAN_PHY_LE_ALL_SUPPORTED)
+                    setPhy(
+                        ScanSettings.SCAN_PHY_LE_1M or ScanSettings.SCAN_PHY_LE_CODED,
+                    )
                 }
             }
             .build()
