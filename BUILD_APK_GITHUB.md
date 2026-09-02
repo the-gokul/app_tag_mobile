@@ -25,7 +25,8 @@ git init
 git add .
 git commit -m "Tag mobile app"
 git branch -M main
-git remote add origin https://github.com/YOUR_USERNAME/app_tag_mobile.git
+git remote set-url origin https://github.com/the-gokul/app_tag_mobile.git
+# (first time only: git remote add origin https://github.com/the-gokul/app_tag_mobile.git)
 git push -u origin main
 ```
 
