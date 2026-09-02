@@ -144,13 +144,6 @@ class TagBleManager(context: Context) {
         }
         val settings = ScanSettings.Builder()
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
-            .apply {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    setPhy(
-                        ScanSettings.SCAN_PHY_LE_1M or ScanSettings.SCAN_PHY_LE_CODED,
-                    )
-                }
-            }
             .build()
         scanner.startScan(null, settings, scanCallback)
     }
