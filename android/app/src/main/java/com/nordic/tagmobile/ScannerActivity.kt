@@ -13,15 +13,16 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.nordic.tagmobile.ble.TagBleManager
 import com.nordic.tagmobile.ble.TagBleScanner
 import com.nordic.tagmobile.databinding.ActivityScannerBinding
-import com.nordic.tagmobile.debug.AgentDebugLog
 import com.nordic.tagmobile.log.LogCategory
 import com.nordic.tagmobile.log.TagLogger
 import com.nordic.tagmobile.model.ConnectedDevice
+import com.nordic.tagmobile.ui.RssiBarsView
 
 class ScannerActivity : AppCompatActivity() {
 
@@ -54,38 +55,18 @@ class ScannerActivity : AppCompatActivity() {
         override fun onDevice(device: BluetoothDevice, rssi: Int, name: String) {
             runOnUiThread {
                 val prev = seen[device.address]
-                val overwritten = prev != null &&
-                    prev.displayName != "Unknown" &&
-                    (name.isBlank() || name == "Unknown")
-                val topBefore = seen.values.maxByOrNull { it.rssi }?.device?.address
-                // Current behavior (measure): always replace entry, then re-sort by RSSI
-                seen[device.address] = ScanEntry(device, rssi, name)
-                val sorted = seen.values.toList().sortedByDescending { it.rssi }
-                val topAfter = sorted.firstOrNull()?.device?.address
-                // #region agent log
-                if (seen.size <= 30) {
-                    AgentDebugLog.init(this@ScannerActivity)
-                    AgentDebugLog.log(
-                        hypothesisId = "A_B",
-                        location = "ScannerActivity.onDevice",
-                        message = "list_update",
-                        data = mapOf(
-                            "address" to device.address,
-                            "incomingName" to name,
-                            "prevName" to (prev?.displayName ?: ""),
-                            "overwroteGoodName" to overwritten,
-                            "prevRssi" to (prev?.rssi ?: 999),
-                            "newRssi" to rssi,
-                            "listSize" to seen.size,
-                            "topBefore" to (topBefore ?: ""),
-                            "topAfter" to (topAfter ?: ""),
-                            "orderChanged" to (topBefore != null && topBefore != topAfter),
-                            "sortedByRssi" to true,
-                        ),
-                    )
+                val keptName = bestName(prev?.displayName, name)
+                val entry = ScanEntry(device, rssi, keptName)
+                val isNew = prev == null
+                val nameChanged = prev != null && prev.displayName != keptName
+                seen[device.address] = entry
+
+                if (isNew || nameChanged) {
+                    adapter.submit(stableSorted(seen.values))
+                } else {
+                    // RSSI-only: update in place — do not re-sort (stops list jumping)
+                    adapter.updateRssi(device.address, rssi)
                 }
-                // #endregion
-                adapter.submit(sorted)
                 binding.emptyScanState.visibility = View.GONE
                 binding.scanCount.text = getString(R.string.devices_found, seen.size)
             }
@@ -144,6 +125,7 @@ class ScannerActivity : AppCompatActivity() {
 
         binding.backBtn.setOnClickListener { finish() }
         binding.deviceList.layoutManager = LinearLayoutManager(this)
+        binding.deviceList.itemAnimator = null
         binding.deviceList.adapter = adapter
         binding.scanCount.text = getString(R.string.devices_found, 0)
 
@@ -157,11 +139,7 @@ class ScannerActivity : AppCompatActivity() {
     private fun startScanning() {
         bleManager.listener = bleListener
         bleScanner.listener = scanListener
-        TagLogger.log(LogCategory.BLE, "SCAN_START", "all BLE devices")
-        // #region agent log
-        AgentDebugLog.init(this)
-        Toast.makeText(this, "Debug log: ${AgentDebugLog.path()}", Toast.LENGTH_LONG).show()
-        // #endregion
+        TagLogger.log(LogCategory.BLE, "SCAN_START", "all BLE devices, sort=name")
         bleScanner.start()
     }
 
@@ -186,6 +164,23 @@ class ScannerActivity : AppCompatActivity() {
         bleManager.connectTag(device)
     }
 
+    companion object {
+        private fun bestName(previous: String?, incoming: String): String {
+            val next = incoming.trim().ifEmpty { "Unknown" }
+            if (previous.isNullOrBlank() || previous == "Unknown") return next
+            if (next == "Unknown") return previous
+            return next
+        }
+
+        /** Named devices A–Z first, then Unknowns by MAC — never by live RSSI. */
+        private fun stableSorted(entries: Collection<ScanEntry>): List<ScanEntry> =
+            entries.sortedWith(
+                compareBy<ScanEntry> { it.displayName.equals("Unknown", ignoreCase = true) }
+                    .thenBy { it.displayName.lowercase() }
+                    .thenBy { it.device.address },
+            )
+    }
+
     private class DeviceAdapter(
         private val onClick: (BluetoothDevice, Int, String) -> Unit,
     ) : RecyclerView.Adapter<DeviceAdapter.Holder>() {
@@ -193,8 +188,33 @@ class ScannerActivity : AppCompatActivity() {
         private var items: List<ScanEntry> = emptyList()
 
         fun submit(list: List<ScanEntry>) {
+            val old = items
+            val diff = DiffUtil.calculateDiff(object : DiffUtil.Callback() {
+                override fun getOldListSize() = old.size
+                override fun getNewListSize() = list.size
+                override fun areItemsTheSame(o: Int, n: Int) =
+                    old[o].device.address == list[n].device.address
+                override fun areContentsTheSame(o: Int, n: Int) = old[o] == list[n]
+                override fun getChangePayload(o: Int, n: Int): Any? {
+                    if (old[o].rssi != list[n].rssi && old[o].displayName == list[n].displayName) {
+                        return PAYLOAD_RSSI
+                    }
+                    return null
+                }
+            })
             items = list
-            notifyDataSetChanged()
+            diff.dispatchUpdatesTo(this)
+        }
+
+        fun updateRssi(address: String, rssi: Int) {
+            val index = items.indexOfFirst { it.device.address == address }
+            if (index < 0) return
+            val cur = items[index]
+            if (cur.rssi == rssi) return
+            items = items.toMutableList().also {
+                it[index] = cur.copy(rssi = rssi)
+            }
+            notifyItemChanged(index, PAYLOAD_RSSI)
         }
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder {
@@ -204,10 +224,24 @@ class ScannerActivity : AppCompatActivity() {
         }
 
         override fun onBindViewHolder(holder: Holder, position: Int) {
-            val item = items[position]
+            bindFull(holder, items[position])
+        }
+
+        override fun onBindViewHolder(holder: Holder, position: Int, payloads: MutableList<Any>) {
+            if (payloads.contains(PAYLOAD_RSSI)) {
+                val item = items[position]
+                holder.rssi.text = "${item.rssi} dBm"
+                holder.bars.setRssi(item.rssi, animate = true)
+            } else {
+                super.onBindViewHolder(holder, position, payloads)
+            }
+        }
+
+        private fun bindFull(holder: Holder, item: ScanEntry) {
             holder.name.text = item.displayName
             holder.mac.text = item.device.address
             holder.rssi.text = "${item.rssi} dBm"
+            holder.bars.setRssi(item.rssi, animate = false)
             holder.itemView.setOnClickListener {
                 onClick(item.device, item.rssi, item.displayName)
             }
@@ -219,6 +253,11 @@ class ScannerActivity : AppCompatActivity() {
             val name: TextView = view.findViewById(R.id.itemName)
             val mac: TextView = view.findViewById(R.id.itemMac)
             val rssi: TextView = view.findViewById(R.id.itemRssi)
+            val bars: RssiBarsView = view.findViewById(R.id.itemRssiBars)
+        }
+
+        companion object {
+            private const val PAYLOAD_RSSI = "rssi"
         }
     }
 }

@@ -1,9 +1,11 @@
 package com.nordic.tagmobile.ble
 
+import android.annotation.SuppressLint
+import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.content.Context
+import android.os.Build
 import android.os.ParcelUuid
-import com.nordic.tagmobile.debug.AgentDebugLog
 import no.nordicsemi.android.support.v18.scanner.BluetoothLeScannerCompat
 import no.nordicsemi.android.support.v18.scanner.ScanCallback
 import no.nordicsemi.android.support.v18.scanner.ScanRecord
@@ -11,8 +13,8 @@ import no.nordicsemi.android.support.v18.scanner.ScanResult
 import no.nordicsemi.android.support.v18.scanner.ScanSettings
 
 /**
- * Scans ALL nearby BLE advertisements (no name/UUID filter).
- * Uses Nordic Scanner Compat with extended/Coded PHY when supported.
+ * Scans ALL nearby BLE advertisements (no name/UUID filter), like nRF Connect scanner.
+ * Connect is validated later via TAG_STREAM GATT — not at scan filter time.
  */
 class TagBleScanner(context: Context) {
 
@@ -23,47 +25,13 @@ class TagBleScanner(context: Context) {
 
     var listener: Listener? = null
 
-    private val appContext = context.applicationContext
     private val scanner = BluetoothLeScannerCompat.getScanner()
     private var scanning = false
-    private var debugSamples = 0
 
     private val callback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
             val device = result.device ?: return
-            val record = result.scanRecord
-            val advName = record?.deviceName
-            val cacheName = try {
-                device.name
-            } catch (_: SecurityException) {
-                null
-            }
-            // Current production resolve path (unchanged for measurement)
-            val name = advName ?: cacheName ?: "Unknown"
-            val parsedAdName = parseLocalNameFromBytes(record)
-
-            // #region agent log
-            if (debugSamples < 50) {
-                debugSamples++
-                AgentDebugLog.init(appContext)
-                AgentDebugLog.log(
-                    hypothesisId = "B_C_D",
-                    location = "TagBleScanner.onScanResult",
-                    message = "scan_hit",
-                    data = mapOf(
-                        "address" to device.address,
-                        "rssi" to result.rssi,
-                        "advName" to (advName ?: ""),
-                        "cacheName" to (cacheName ?: ""),
-                        "parsedAdName" to (parsedAdName ?: ""),
-                        "resolved" to name,
-                        "isLegacy" to result.isLegacy,
-                        "bytesLen" to (record?.bytes?.size ?: -1),
-                    ),
-                )
-            }
-            // #endregion
-
+            val name = resolveName(device, result.scanRecord)
             listener?.onDevice(device, result.rssi, name)
         }
 
@@ -73,35 +41,14 @@ class TagBleScanner(context: Context) {
 
         override fun onScanFailed(errorCode: Int) {
             scanning = false
-            // #region agent log
-            AgentDebugLog.init(appContext)
-            AgentDebugLog.log(
-                hypothesisId = "C",
-                location = "TagBleScanner.onScanFailed",
-                message = "scan_failed",
-                data = mapOf("errorCode" to errorCode),
-            )
-            // #endregion
             listener?.onError("BLE scan failed: $errorCode")
         }
     }
 
     fun start() {
         if (scanning) return
-        debugSamples = 0
-        AgentDebugLog.init(appContext)
-        // #region agent log
-        AgentDebugLog.log(
-            hypothesisId = "C",
-            location = "TagBleScanner.start",
-            message = "scan_start",
-            data = mapOf(
-                "legacyFalse" to true,
-                "phyAll" to true,
-                "debugPath" to AgentDebugLog.path(),
-            ),
-        )
-        // #endregion
+        // Prefer legacy+extended: setLegacy(false) still reports legacy PDUs on Oreo+,
+        // and matches Nordic Scanner Compat extended path used by toolbox-style apps.
         val settings = ScanSettings.Builder()
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
             .setReportDelay(0)
@@ -110,7 +57,6 @@ class TagBleScanner(context: Context) {
             .setUseHardwareBatchingIfSupported(false)
             .build()
         try {
-            // null filters = all BLE devices
             scanner.startScan(null, settings, callback)
             scanning = true
         } catch (e: Exception) {
@@ -127,6 +73,41 @@ class TagBleScanner(context: Context) {
         scanning = false
     }
 
+    @SuppressLint("MissingPermission")
+    private fun resolveName(device: BluetoothDevice, record: ScanRecord?): String {
+        val adv = record?.deviceName?.trim()?.takeIf { it.isNotEmpty() }
+        val parsed = parseLocalNameFromBytes(record)
+        val cache = try {
+            device.name?.trim()?.takeIf { it.isNotEmpty() }
+        } catch (_: SecurityException) {
+            null
+        }
+        val alias = try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                device.alias?.trim()?.takeIf { it.isNotEmpty() }
+            } else {
+                null
+            }
+        } catch (_: SecurityException) {
+            null
+        }
+        val bonded = bondedName(device.address)
+        return firstNonBlank(adv, parsed, cache, alias, bonded) ?: "Unknown"
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun bondedName(address: String): String? {
+        return try {
+            val adapter = BluetoothAdapter.getDefaultAdapter() ?: return null
+            adapter.bondedDevices?.firstOrNull { it.address.equals(address, ignoreCase = true) }
+                ?.name
+                ?.trim()
+                ?.takeIf { it.isNotEmpty() }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     companion object {
         fun hasTagServiceUuid(result: ScanResult): Boolean {
             val target = ParcelUuid.fromString(
@@ -135,7 +116,10 @@ class TagBleScanner(context: Context) {
             return result.scanRecord?.serviceUuids?.any { it == target } == true
         }
 
-        /** Parse Complete (0x09) / Shortened (0x08) Local Name from AD bytes (debug + future use). */
+        private fun firstNonBlank(vararg values: String?): String? =
+            values.firstOrNull { !it.isNullOrBlank() }
+
+        /** Complete (0x09) / Shortened (0x08) Local Name from raw AD. */
         fun parseLocalNameFromBytes(record: ScanRecord?): String? {
             val bytes = record?.bytes ?: return null
             var i = 0
