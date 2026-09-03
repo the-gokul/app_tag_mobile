@@ -106,7 +106,17 @@ class ScannerActivity : AppCompatActivity() {
 
         override fun onDisconnected() {
             runOnUiThread {
-                binding.connectingOverlay.visibility = View.GONE
+                // Dropped during connect (before Device screen) — resume scan.
+                if (binding.connectingOverlay.visibility == View.VISIBLE) {
+                    binding.connectingOverlay.visibility = View.GONE
+                    TagLogger.log(LogCategory.ERRORS, "CONNECT_DROP", pendingName)
+                    Toast.makeText(
+                        this@ScannerActivity,
+                        "Connection dropped — try again",
+                        Toast.LENGTH_LONG,
+                    ).show()
+                    bleScanner.start()
+                }
             }
         }
 

@@ -103,10 +103,11 @@ class TagBleManager(context: Context) : BleManager(context) {
 
     fun connectTag(device: BluetoothDevice) {
         ready = false
+        // Prefer LE 1M — matches tag advertising; avoid Coded during connect.
         connect(device)
-            .retry(3, 100)
+            .retry(3, 200)
             .useAutoConnect(false)
-            .timeout(15_000)
+            .timeout(20_000)
             .enqueue()
     }
 
