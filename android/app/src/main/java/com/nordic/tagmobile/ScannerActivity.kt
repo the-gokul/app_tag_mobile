@@ -18,6 +18,7 @@ import androidx.recyclerview.widget.RecyclerView
 import com.nordic.tagmobile.ble.TagBleManager
 import com.nordic.tagmobile.ble.TagBleScanner
 import com.nordic.tagmobile.databinding.ActivityScannerBinding
+import com.nordic.tagmobile.debug.AgentDebugLog
 import com.nordic.tagmobile.log.LogCategory
 import com.nordic.tagmobile.log.TagLogger
 import com.nordic.tagmobile.model.ConnectedDevice
@@ -52,8 +53,39 @@ class ScannerActivity : AppCompatActivity() {
     private val scanListener = object : TagBleScanner.Listener {
         override fun onDevice(device: BluetoothDevice, rssi: Int, name: String) {
             runOnUiThread {
+                val prev = seen[device.address]
+                val overwritten = prev != null &&
+                    prev.displayName != "Unknown" &&
+                    (name.isBlank() || name == "Unknown")
+                val topBefore = seen.values.maxByOrNull { it.rssi }?.device?.address
+                // Current behavior (measure): always replace entry, then re-sort by RSSI
                 seen[device.address] = ScanEntry(device, rssi, name)
-                adapter.submit(seen.values.toList().sortedByDescending { it.rssi })
+                val sorted = seen.values.toList().sortedByDescending { it.rssi }
+                val topAfter = sorted.firstOrNull()?.device?.address
+                // #region agent log
+                if (seen.size <= 30) {
+                    AgentDebugLog.init(this@ScannerActivity)
+                    AgentDebugLog.log(
+                        hypothesisId = "A_B",
+                        location = "ScannerActivity.onDevice",
+                        message = "list_update",
+                        data = mapOf(
+                            "address" to device.address,
+                            "incomingName" to name,
+                            "prevName" to (prev?.displayName ?: ""),
+                            "overwroteGoodName" to overwritten,
+                            "prevRssi" to (prev?.rssi ?: 999),
+                            "newRssi" to rssi,
+                            "listSize" to seen.size,
+                            "topBefore" to (topBefore ?: ""),
+                            "topAfter" to (topAfter ?: ""),
+                            "orderChanged" to (topBefore != null && topBefore != topAfter),
+                            "sortedByRssi" to true,
+                        ),
+                    )
+                }
+                // #endregion
+                adapter.submit(sorted)
                 binding.emptyScanState.visibility = View.GONE
                 binding.scanCount.text = getString(R.string.devices_found, seen.size)
             }
@@ -126,6 +158,10 @@ class ScannerActivity : AppCompatActivity() {
         bleManager.listener = bleListener
         bleScanner.listener = scanListener
         TagLogger.log(LogCategory.BLE, "SCAN_START", "all BLE devices")
+        // #region agent log
+        AgentDebugLog.init(this)
+        Toast.makeText(this, "Debug log: ${AgentDebugLog.path()}", Toast.LENGTH_LONG).show()
+        // #endregion
         bleScanner.start()
     }
 
