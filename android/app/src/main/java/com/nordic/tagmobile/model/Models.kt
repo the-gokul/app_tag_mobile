@@ -1,7 +1,7 @@
 package com.nordic.tagmobile.model
 
 data class ConnectedDevice(
-    val name: String,
+    var name: String,
     val address: String,
     var rssi: Int,
 )

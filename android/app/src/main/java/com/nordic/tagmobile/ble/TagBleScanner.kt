@@ -15,7 +15,7 @@ import java.util.UUID
 
 /**
  * Scans nearby BLE like nRF Connect default scanner (legacy 1M, no UUID filter).
- * Tag devices are recognized by GAP name and/or TAG_STREAM UUID in the advert.
+ * Tag devices are recognized by GAP name Tag_* and/or TAG_STREAM UUID in the advert.
  */
 class TagBleScanner(context: Context) {
 
@@ -33,8 +33,8 @@ class TagBleScanner(context: Context) {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
             val device = result.device ?: return
             val record = result.scanRecord
-            val isTag = hasTagServiceUuid(record)
-            val name = resolveName(device, record, isTag)
+            val name = resolveName(device, record, hasTagServiceUuid(record))
+            val isTag = hasTagServiceUuid(record) || looksLikeTagName(name)
             listener?.onDevice(device, result.rssi, name, isTag)
         }
 
@@ -102,6 +102,10 @@ class TagBleScanner(context: Context) {
         }
         return "Unknown"
     }
+
+    private fun looksLikeTagName(name: String): Boolean =
+        name.equals("Tag", ignoreCase = true) ||
+            name.startsWith("Tag_", ignoreCase = true)
 
     @SuppressLint("MissingPermission")
     private fun bondedName(address: String): String? {

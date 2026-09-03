@@ -1,18 +1,17 @@
 package com.nordic.tagmobile
 
-import android.content.Intent
 import android.os.Bundle
+import android.view.MenuItem
 import android.view.View
+import android.widget.PopupMenu
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import com.nordic.tagmobile.analysis.SessionAnalyzer
 import com.nordic.tagmobile.ble.TagBleManager
 import com.nordic.tagmobile.databinding.ActivityDeviceBinding
 import com.nordic.tagmobile.log.LogCategory
 import com.nordic.tagmobile.log.TagLogger
-import com.nordic.tagmobile.model.DeviceConfig
 import com.nordic.tagmobile.model.RecordingState
 import com.nordic.tagmobile.protocol.CsvExporter
 import com.nordic.tagmobile.protocol.SensorPacketParser
@@ -79,6 +78,7 @@ class DeviceActivity : AppCompatActivity() {
                 return
             }
             runOnUiThread {
+                maybeUpdateDeviceId(parsed.deviceId)
                 TagSession.receivedRows.addAll(parsed.rows)
                 TagSession.packetIds.add(parsed.packetId)
                 TagSession.packetCount++
@@ -111,48 +111,49 @@ class DeviceActivity : AppCompatActivity() {
 
         binding.deviceTitle.text = device.name
         binding.backBtn.setOnClickListener { finish() }
-        binding.disconnectBtn.setOnClickListener {
-            bleManager.disconnectTag()
-            TagSession.clearConnection()
-            finish()
-        }
-        binding.customDataRow.setOnClickListener {
-            startActivity(Intent(this, CustomDataActivity::class.java))
-        }
-        binding.infoBtn.setOnClickListener { showDeviceInfo() }
-        binding.customDataToggle.setOnCheckedChangeListener { _, checked ->
-            if (checked) {
-                binding.customDataToggle.isChecked = false
-                startActivity(Intent(this, CustomDataActivity::class.java))
-            } else {
-                TagSession.customDataEnabled = false
-                TagSession.deviceConfig = DeviceConfig.default()
-                updateCustomDataLabel()
-            }
-        }
+        binding.deviceMenuBtn.setOnClickListener { showDeviceMenu(it) }
         binding.startBtn.setOnClickListener { startRecording() }
         binding.stopBtn.setOnClickListener { stopRecording() }
         binding.saveBtn.text = getString(R.string.export)
         binding.saveBtn.setOnClickListener { exportLastRecording() }
 
         bleManager.listener = bleListener
-        updateCustomDataLabel()
         updateRecordingUi()
     }
 
     override fun onResume() {
         super.onResume()
-        updateCustomDataLabel()
         updateRecordingUi()
     }
 
     private fun deviceLabel(): String =
         TagSession.connectedDevice?.let { "${it.name} ${it.address}" } ?: "?"
 
-    private fun updateCustomDataLabel() {
-        binding.customDataMode.text =
-            if (TagSession.customDataEnabled) "Custom" else "Default"
-        binding.customDataToggle.isChecked = TagSession.customDataEnabled
+    private fun maybeUpdateDeviceId(deviceId: String) {
+        val connected = TagSession.connectedDevice ?: return
+        if (connected.name == deviceId) return
+        if (connected.name.equals("Tag", ignoreCase = true) ||
+            !connected.name.startsWith("Tag_", ignoreCase = true)
+        ) {
+            connected.name = deviceId
+            binding.deviceTitle.text = deviceId
+        }
+    }
+
+    private fun showDeviceMenu(anchor: View) {
+        val popup = PopupMenu(this, anchor)
+        popup.menu.add(0, 1, 0, getString(R.string.disconnect))
+        popup.setOnMenuItemClickListener { item: MenuItem ->
+            if (item.itemId == 1) {
+                bleManager.disconnectTag()
+                TagSession.clearConnection()
+                finish()
+                true
+            } else {
+                false
+            }
+        }
+        popup.show()
     }
 
     private fun startRecording() {
@@ -217,9 +218,11 @@ class DeviceActivity : AppCompatActivity() {
         updateRecordingUi()
 
         try {
-            val deviceName = TagSession.connectedDevice?.name ?: "Tag"
+            val deviceName = TagSession.connectedDevice?.name
+                ?: TagSession.receivedRows.firstOrNull()?.deviceId
+                ?: "Tag"
             val baseName = RecordingStore.makeBaseName(deviceName)
-            val csv = CsvExporter.build(TagSession.receivedRows, TagSession.includeSiUnits)
+            val csv = CsvExporter.build(TagSession.receivedRows)
             val logBody = buildString {
                 appendLine("Tag session log")
                 appendLine("base_name=$baseName")
@@ -316,29 +319,5 @@ class DeviceActivity : AppCompatActivity() {
                 binding.recordMeta.text = TagSession.lastFeedbackText
             }
         }
-    }
-
-    private fun showDeviceInfo() {
-        val cfg = if (TagSession.customDataEnabled) TagSession.deviceConfig
-        else DeviceConfig.default()
-        val device = TagSession.connectedDevice ?: return
-        val msg = buildString {
-            appendLine(device.name)
-            appendLine(device.address)
-            appendLine("Signal: ${device.rssi} dBm")
-            appendLine("Data mode: ${if (TagSession.customDataEnabled) "Custom" else "Default"}")
-            appendLine("Samples / packet: ${cfg.samplesPerPacket}")
-            appendLine("Sample period: ${cfg.samplePeriodMs} ms")
-            appendLine("Hold: ${cfg.flushPkts} pkts (~${cfg.holdMs / 1000.0} s)")
-            appendLine("BLE: Raw binary v8")
-            appendLine(
-                "CSV: ${if (TagSession.includeSiUnits) "Raw + SI" else "Raw only"}",
-            )
-        }
-        AlertDialog.Builder(this)
-            .setTitle("Device info")
-            .setMessage(msg.trim())
-            .setPositiveButton(android.R.string.ok, null)
-            .show()
     }
 }

@@ -44,13 +44,13 @@
                 android:textSize="12sp" />
         </LinearLayout>
 
-        <Button
-            android:id="@+id/disconnectBtn"
-            style="@style/Widget.MaterialComponents.Button.TextButton"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/disconnect"
-            android:textColor="@android:color/white" />
+        <ImageButton
+            android:id="@+id/deviceMenuBtn"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:src="@drawable/ic_menu"
+            android:contentDescription="@string/disconnect" />
     </LinearLayout>
 
     <ScrollView
@@ -66,60 +66,6 @@
             <com.google.android.material.card.MaterialCardView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                app:cardCornerRadius="16dp"
-                app:strokeColor="#D1D5DB"
-                app:strokeWidth="1dp">
-
-                <LinearLayout
-                    android:id="@+id/customDataRow"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical"
-                    android:padding="16dp">
-
-                    <LinearLayout
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:orientation="horizontal"
-                        android:gravity="center_vertical">
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="Custom data"
-                            android:textStyle="bold"
-                            android:textColor="#111827" />
-
-                        <ImageButton
-                            android:id="@+id/infoBtn"
-                            android:layout_width="36dp"
-                            android:layout_height="36dp"
-                            android:background="?attr/selectableItemBackgroundBorderless"
-                            android:src="@drawable/ic_info"
-                            android:contentDescription="Info" />
-                    </LinearLayout>
-
-                    <TextView
-                        android:id="@+id/customDataMode"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Default"
-                        android:textColor="#6B7280"
-                        android:layout_marginEnd="8dp" />
-
-                    <com.google.android.material.switchmaterial.SwitchMaterial
-                        android:id="@+id/customDataToggle"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content" />
-                </LinearLayout>
-            </com.google.android.material.card.MaterialCardView>
-
-            <com.google.android.material.card.MaterialCardView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="16dp"
                 app:cardCornerRadius="16dp"
                 app:strokeColor="#D1D5DB"
                 app:strokeWidth="1dp">

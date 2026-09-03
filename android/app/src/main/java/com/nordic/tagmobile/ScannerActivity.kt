@@ -57,7 +57,9 @@ class ScannerActivity : AppCompatActivity() {
             runOnUiThread {
                 val prev = seen[device.address]
                 val keptName = bestName(prev?.displayName, name)
-                val tagged = isTag || prev?.isTag == true || keptName.equals("Tag", ignoreCase = true)
+                val tagged = isTag || prev?.isTag == true ||
+                    keptName.equals("Tag", ignoreCase = true) ||
+                    keptName.startsWith("Tag_", ignoreCase = true)
                 val entry = ScanEntry(device, rssi, keptName, tagged)
                 val isNew = prev == null
                 val nameChanged = prev != null && prev.displayName != keptName
@@ -171,6 +173,17 @@ class ScannerActivity : AppCompatActivity() {
             val next = incoming.trim().ifEmpty { "Unknown" }
             if (previous.isNullOrBlank() || previous == "Unknown") return next
             if (next == "Unknown") return previous
+            // Prefer Tag_<serial> over generic Tag when both appear.
+            if (previous.equals("Tag", ignoreCase = true) &&
+                next.startsWith("Tag_", ignoreCase = true)
+            ) {
+                return next
+            }
+            if (next.equals("Tag", ignoreCase = true) &&
+                previous.startsWith("Tag_", ignoreCase = true)
+            ) {
+                return previous
+            }
             return next
         }
 
