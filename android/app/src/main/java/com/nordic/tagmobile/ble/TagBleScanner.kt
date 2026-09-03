@@ -5,21 +5,22 @@ import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.content.Context
 import android.os.Build
-import android.os.ParcelUuid
+import com.nordic.tagmobile.protocol.TagUuids
 import no.nordicsemi.android.support.v18.scanner.BluetoothLeScannerCompat
 import no.nordicsemi.android.support.v18.scanner.ScanCallback
 import no.nordicsemi.android.support.v18.scanner.ScanRecord
 import no.nordicsemi.android.support.v18.scanner.ScanResult
 import no.nordicsemi.android.support.v18.scanner.ScanSettings
+import java.util.UUID
 
 /**
- * Scans ALL nearby BLE advertisements (no name/UUID filter), like nRF Connect scanner.
- * Connect is validated later via TAG_STREAM GATT — not at scan filter time.
+ * Scans nearby BLE like nRF Connect default scanner (legacy 1M, no UUID filter).
+ * Tag devices are recognized by GAP name and/or TAG_STREAM UUID in the advert.
  */
 class TagBleScanner(context: Context) {
 
     interface Listener {
-        fun onDevice(device: BluetoothDevice, rssi: Int, name: String)
+        fun onDevice(device: BluetoothDevice, rssi: Int, name: String, isTag: Boolean)
         fun onError(message: String)
     }
 
@@ -31,8 +32,10 @@ class TagBleScanner(context: Context) {
     private val callback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
             val device = result.device ?: return
-            val name = resolveName(device, result.scanRecord)
-            listener?.onDevice(device, result.rssi, name)
+            val record = result.scanRecord
+            val isTag = hasTagServiceUuid(record)
+            val name = resolveName(device, record, isTag)
+            listener?.onDevice(device, result.rssi, name, isTag)
         }
 
         override fun onBatchScanResults(results: MutableList<ScanResult>) {
@@ -47,13 +50,11 @@ class TagBleScanner(context: Context) {
 
     fun start() {
         if (scanning) return
-        // Prefer legacy+extended: setLegacy(false) still reports legacy PDUs on Oreo+,
-        // and matches Nordic Scanner Compat extended path used by toolbox-style apps.
+        // nRF Connect / Toolbox default: legacy advertisements (phones without Coded PHY).
         val settings = ScanSettings.Builder()
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
             .setReportDelay(0)
-            .setLegacy(false)
-            .setPhy(ScanSettings.PHY_LE_ALL_SUPPORTED)
+            .setLegacy(true)
             .setUseHardwareBatchingIfSupported(false)
             .build()
         try {
@@ -74,7 +75,7 @@ class TagBleScanner(context: Context) {
     }
 
     @SuppressLint("MissingPermission")
-    private fun resolveName(device: BluetoothDevice, record: ScanRecord?): String {
+    private fun resolveName(device: BluetoothDevice, record: ScanRecord?, isTag: Boolean): String {
         val adv = record?.deviceName?.trim()?.takeIf { it.isNotEmpty() }
         val parsed = parseLocalNameFromBytes(record)
         val cache = try {
@@ -92,7 +93,14 @@ class TagBleScanner(context: Context) {
             null
         }
         val bonded = bondedName(device.address)
-        return firstNonBlank(adv, parsed, cache, alias, bonded) ?: "Unknown"
+        val resolved = firstNonBlank(adv, parsed, cache, alias, bonded)
+        if (!resolved.isNullOrBlank() && resolved != "Unknown") {
+            return resolved
+        }
+        if (isTag) {
+            return "Tag"
+        }
+        return "Unknown"
     }
 
     @SuppressLint("MissingPermission")
@@ -109,17 +117,19 @@ class TagBleScanner(context: Context) {
     }
 
     companion object {
-        fun hasTagServiceUuid(result: ScanResult): Boolean {
-            val target = ParcelUuid.fromString(
-                com.nordic.tagmobile.protocol.TagUuids.STREAM_SERVICE,
-            )
-            return result.scanRecord?.serviceUuids?.any { it == target } == true
+        private val TAG_SERVICE: UUID = UUID.fromString(TagUuids.STREAM_SERVICE)
+
+        fun hasTagServiceUuid(record: ScanRecord?): Boolean {
+            val uuids = record?.serviceUuids ?: return false
+            return uuids.any { it.uuid == TAG_SERVICE }
         }
+
+        fun hasTagServiceUuid(result: ScanResult): Boolean =
+            hasTagServiceUuid(result.scanRecord)
 
         private fun firstNonBlank(vararg values: String?): String? =
             values.firstOrNull { !it.isNullOrBlank() }
 
-        /** Complete (0x09) / Shortened (0x08) Local Name from raw AD. */
         fun parseLocalNameFromBytes(record: ScanRecord?): String? {
             val bytes = record?.bytes ?: return null
             var i = 0

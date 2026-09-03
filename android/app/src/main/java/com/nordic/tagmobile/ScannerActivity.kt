@@ -38,6 +38,7 @@ class ScannerActivity : AppCompatActivity() {
         val device: BluetoothDevice,
         val rssi: Int,
         val displayName: String,
+        val isTag: Boolean,
     )
 
     private val permissionLauncher = registerForActivityResult(
@@ -52,19 +53,20 @@ class ScannerActivity : AppCompatActivity() {
     }
 
     private val scanListener = object : TagBleScanner.Listener {
-        override fun onDevice(device: BluetoothDevice, rssi: Int, name: String) {
+        override fun onDevice(device: BluetoothDevice, rssi: Int, name: String, isTag: Boolean) {
             runOnUiThread {
                 val prev = seen[device.address]
                 val keptName = bestName(prev?.displayName, name)
-                val entry = ScanEntry(device, rssi, keptName)
+                val tagged = isTag || prev?.isTag == true || keptName.equals("Tag", ignoreCase = true)
+                val entry = ScanEntry(device, rssi, keptName, tagged)
                 val isNew = prev == null
                 val nameChanged = prev != null && prev.displayName != keptName
+                val tagChanged = prev != null && prev.isTag != tagged
                 seen[device.address] = entry
 
-                if (isNew || nameChanged) {
+                if (isNew || nameChanged || tagChanged) {
                     adapter.submit(stableSorted(seen.values))
                 } else {
-                    // RSSI-only: update in place — do not re-sort (stops list jumping)
                     adapter.updateRssi(device.address, rssi)
                 }
                 binding.emptyScanState.visibility = View.GONE
@@ -172,10 +174,11 @@ class ScannerActivity : AppCompatActivity() {
             return next
         }
 
-        /** Named devices A–Z first, then Unknowns by MAC — never by live RSSI. */
+        /** Tag devices first, then named A–Z, then Unknowns — never by live RSSI. */
         private fun stableSorted(entries: Collection<ScanEntry>): List<ScanEntry> =
             entries.sortedWith(
-                compareBy<ScanEntry> { it.displayName.equals("Unknown", ignoreCase = true) }
+                compareByDescending<ScanEntry> { it.isTag }
+                    .thenBy { it.displayName.equals("Unknown", ignoreCase = true) }
                     .thenBy { it.displayName.lowercase() }
                     .thenBy { it.device.address },
             )
