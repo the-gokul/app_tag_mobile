@@ -11,3 +11,5 @@ build.log
 .idea/
 *.iml
 .DS_Store
+
+debug-*.log
