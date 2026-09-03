@@ -19,6 +19,11 @@ data class SensorCsvRow(
     val bodyTempX100: Int,
 )
 
+data class ParsedPacket(
+    val packetId: Long,
+    val rows: List<SensorCsvRow>,
+)
+
 object SensorPacketParser {
     const val START_BYTE = 0xA1
     const val STOP_BYTE = 0x5A
@@ -31,7 +36,7 @@ object SensorPacketParser {
         data: ByteArray,
         syncBaseUnixMs: Long,
         tagUptimeAtSync: Long?,
-    ): List<SensorCsvRow>? {
+    ): ParsedPacket? {
         if (data.size < HEADER_SIZE + SAMPLE_WIRE_SIZE + 1) return null
         val buf = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN)
         val start = buf.get().toInt() and 0xFF
@@ -39,7 +44,7 @@ object SensorPacketParser {
         val version = buf.get().toInt() and 0xFF
         if (version != VERSION) return null
         buf.int // serial
-        buf.int // packet id
+        val packetId = buf.int.toLong() and 0xFFFFFFFFL
         val firstSampleNumber = buf.int.toLong() and 0xFFFFFFFFL
         val baseTimestampMs = buf.int.toLong() and 0xFFFFFFFFL
 
@@ -87,6 +92,6 @@ object SensorPacketParser {
                 ),
             )
         }
-        return rows
+        return ParsedPacket(packetId = packetId, rows = rows)
     }
 }

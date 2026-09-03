@@ -7,51 +7,45 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import com.nordic.tagmobile.analysis.SessionAnalyzer
 import com.nordic.tagmobile.ble.TagBleManager
 import com.nordic.tagmobile.databinding.ActivityDeviceBinding
+import com.nordic.tagmobile.log.LogCategory
+import com.nordic.tagmobile.log.TagLogger
 import com.nordic.tagmobile.model.DeviceConfig
 import com.nordic.tagmobile.model.RecordingState
 import com.nordic.tagmobile.protocol.CsvExporter
 import com.nordic.tagmobile.protocol.SensorPacketParser
 import com.nordic.tagmobile.protocol.SensorPacketParser.HEADER_SIZE
+import com.nordic.tagmobile.storage.RecordingStore
 
 class DeviceActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityDeviceBinding
     private val bleManager get() = TagApp.instance.bleManager
-    private var pendingCsv: String? = null
-    private var pendingFileName: String? = null
+    private var pendingExportCsv: String? = null
+    private var pendingExportName: String? = null
 
-    private val saveLauncher = registerForActivityResult(
+    private val exportLauncher = registerForActivityResult(
         ActivityResultContracts.CreateDocument("text/csv"),
     ) { uri ->
-        val csv = pendingCsv
-        val name = pendingFileName
-        if (uri == null || csv == null) {
-            TagSession.recordingState = RecordingState.RECEIVED
-            updateRecordingUi()
-        } else {
+        val csv = pendingExportCsv
+        val name = pendingExportName
+        if (uri != null && csv != null) {
             try {
                 contentResolver.openOutputStream(uri)?.use {
                     it.write(csv.toByteArray(Charsets.UTF_8))
                 }
-                val bytes = csv.toByteArray(Charsets.UTF_8).size
-                Toast.makeText(
-                    this,
-                    "Saved ${name ?: "file.csv"} (${CsvExporter.formatFileSize(bytes)})",
-                    Toast.LENGTH_LONG,
-                ).show()
-                TagSession.resetRecording()
-                updateRecordingUi()
+                Toast.makeText(this, "Exported ${name ?: "file.csv"}", Toast.LENGTH_LONG).show()
+                TagLogger.log(LogCategory.FILE, "EXPORT_OK", name ?: "")
             } catch (e: Exception) {
-                Toast.makeText(this, "Save failed: ${e.message}", Toast.LENGTH_LONG).show()
-                TagSession.recordingState = RecordingState.RECEIVED
-                updateRecordingUi()
-            } finally {
-                pendingCsv = null
-                pendingFileName = null
+                Toast.makeText(this, "Export failed: ${e.message}", Toast.LENGTH_LONG).show()
+                TagLogger.log(LogCategory.ERRORS, "EXPORT_FAIL", e.message ?: "")
             }
         }
+        pendingExportCsv = null
+        pendingExportName = null
+        updateRecordingUi()
     }
 
     private val bleListener = object : TagBleManager.Listener {
@@ -59,6 +53,7 @@ class DeviceActivity : AppCompatActivity() {
 
         override fun onDisconnected() {
             runOnUiThread {
+                TagLogger.log(LogCategory.BLE, "DISCONNECTED", deviceLabel())
                 TagSession.clearConnection()
                 Toast.makeText(this@DeviceActivity, "Disconnected", Toast.LENGTH_SHORT).show()
                 finish()
@@ -73,20 +68,31 @@ class DeviceActivity : AppCompatActivity() {
                 buf.position(14)
                 TagSession.tagUptimeAtSync = buf.int.toLong() and 0xFFFFFFFFL
             }
-            val rows = SensorPacketParser.parsePacket(
+            val parsed = SensorPacketParser.parsePacket(
                 data,
                 TagSession.syncBaseUnixMs,
                 TagSession.tagUptimeAtSync,
-            ) ?: return
+            )
+            if (parsed == null) {
+                TagSession.parseFailures++
+                TagLogger.log(LogCategory.ERRORS, "PARSE_FAIL", "bytes=${data.size}")
+                return
+            }
             runOnUiThread {
-                TagSession.receivedRows.addAll(rows)
+                TagSession.receivedRows.addAll(parsed.rows)
+                TagSession.packetIds.add(parsed.packetId)
                 TagSession.packetCount++
+                TagLogger.logDataVerbose(
+                    "PACKET",
+                    "id=${parsed.packetId} samples=${parsed.rows.size}",
+                )
                 updateRecordingUi()
             }
         }
 
         override fun onError(message: String) {
             runOnUiThread {
+                TagLogger.log(LogCategory.ERRORS, "BLE_ERROR", message)
                 Toast.makeText(this@DeviceActivity, message, Toast.LENGTH_SHORT).show()
             }
         }
@@ -126,7 +132,8 @@ class DeviceActivity : AppCompatActivity() {
         }
         binding.startBtn.setOnClickListener { startRecording() }
         binding.stopBtn.setOnClickListener { stopRecording() }
-        binding.saveBtn.setOnClickListener { saveRecording() }
+        binding.saveBtn.text = getString(R.string.export)
+        binding.saveBtn.setOnClickListener { exportLastRecording() }
 
         bleManager.listener = bleListener
         updateCustomDataLabel()
@@ -139,6 +146,9 @@ class DeviceActivity : AppCompatActivity() {
         updateRecordingUi()
     }
 
+    private fun deviceLabel(): String =
+        TagSession.connectedDevice?.let { "${it.name} ${it.address}" } ?: "?"
+
     private fun updateCustomDataLabel() {
         binding.customDataMode.text =
             if (TagSession.customDataEnabled) "Custom" else "Default"
@@ -150,12 +160,22 @@ class DeviceActivity : AppCompatActivity() {
             Toast.makeText(this, "Not connected", Toast.LENGTH_SHORT).show()
             return
         }
+        TagLogger.clearSessionLog()
         TagSession.receivedRows.clear()
+        TagSession.packetIds.clear()
         TagSession.packetCount = 0
+        TagSession.parseFailures = 0
+        TagSession.lastFeedbackText = ""
+        TagSession.lastHistoryEntry = null
         TagSession.tagUptimeAtSync = null
         TagSession.recordingState = RecordingState.SYNCING
         updateRecordingUi()
         TagSession.syncBaseUnixMs = System.currentTimeMillis()
+        TagLogger.log(
+            LogCategory.CONTROL,
+            "START",
+            "unix_ms=${TagSession.syncBaseUnixMs} device=${deviceLabel()}",
+        )
         bleManager.startRecording(TagSession.syncBaseUnixMs)
         binding.root.postDelayed({
             if (TagSession.recordingState == RecordingState.SYNCING) {
@@ -169,68 +189,105 @@ class DeviceActivity : AppCompatActivity() {
         if (TagSession.recordingState != RecordingState.RECEIVING &&
             TagSession.recordingState != RecordingState.SYNCING
         ) return
+
         bleManager.stopRecording()
-        TagSession.recordingState = RecordingState.RECEIVED
-        updateRecordingUi()
-    }
+        TagLogger.log(LogCategory.CONTROL, "STOP", deviceLabel())
 
-    private fun saveRecording() {
-        if (TagSession.recordingState != RecordingState.RECEIVED ||
-            TagSession.receivedRows.isEmpty()
-        ) return
-
-        val device = TagSession.connectedDevice ?: return
-        val defaultName = "${device.name}_${CsvExporter.formatDateTime(System.currentTimeMillis())
-            .replace(":", "-").replace(".", "-")}"
-
-        val input = android.widget.EditText(this).apply {
-            setText(defaultName)
-            setSelection(text.length)
+        val report = SessionAnalyzer.analyze(
+            packetCount = TagSession.packetCount,
+            rows = TagSession.receivedRows.toList(),
+            packetIds = TagSession.packetIds.toList(),
+            parseFailures = TagSession.parseFailures,
+        )
+        if (report.hasPossibleLoss) {
+            TagLogger.log(LogCategory.GAPS, "POSSIBLE_LOSS", report.statusDetail)
+        } else {
+            TagLogger.logDataSummary(
+                "SESSION_OK",
+                "packets=${report.packetCount} samples=${report.sampleCount}",
+            )
         }
-        AlertDialog.Builder(this)
-            .setTitle("Enter CSV file name")
-            .setView(input)
-            .setPositiveButton("Save") { _, _ ->
-                var name = input.text.toString().trim()
-                if (name.isEmpty()) name = defaultName
-                if (!name.lowercase().endsWith(".csv")) name += ".csv"
-                beginSave(name)
+        TagLogger.logDataSummary(
+            "SESSION_SUMMARY",
+            "packets=${report.packetCount} samples=${report.sampleCount} status=${report.statusShort}",
+        )
+
+        TagSession.lastFeedbackText = report.feedbackText
+        TagSession.recordingState = RecordingState.SAVING
+        updateRecordingUi()
+
+        try {
+            val deviceName = TagSession.connectedDevice?.name ?: "Tag"
+            val baseName = RecordingStore.makeBaseName(deviceName)
+            val csv = CsvExporter.build(TagSession.receivedRows, TagSession.includeSiUnits)
+            val logBody = buildString {
+                appendLine("Tag session log")
+                appendLine("base_name=$baseName")
+                appendLine("device=${deviceLabel()}")
+                appendLine("packets=${report.packetCount}")
+                appendLine("samples=${report.sampleCount}")
+                appendLine("status=${report.statusShort}")
+                if (report.statusDetail.isNotBlank()) appendLine(report.statusDetail)
+                appendLine("---")
+                append(TagLogger.sessionSnapshot())
             }
-            .setNegativeButton(android.R.string.cancel, null)
-            .show()
+            val entry = RecordingStore.saveRecording(
+                context = this,
+                baseName = baseName,
+                csvContent = csv,
+                logContent = logBody,
+                packetCount = report.packetCount,
+                sampleCount = report.sampleCount,
+                status = report.statusShort,
+            )
+            TagSession.lastHistoryEntry = entry
+            TagSession.lastFeedbackText = report.feedbackText
+            TagSession.recordingState = RecordingState.RECEIVED
+            updateRecordingUi()
+            Toast.makeText(this, "Saved ${entry.baseName}", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            TagLogger.log(LogCategory.ERRORS, "AUTO_SAVE_FAIL", e.message ?: "")
+            TagSession.recordingState = RecordingState.RECEIVED
+            TagSession.lastFeedbackText =
+                report.feedbackText.replace(
+                    "Saved to History (CSV + log)",
+                    "Save failed: ${e.message}",
+                )
+            updateRecordingUi()
+            Toast.makeText(this, "Auto-save failed: ${e.message}", Toast.LENGTH_LONG).show()
+        }
     }
 
-    private fun beginSave(fileName: String) {
-        TagSession.recordingState = RecordingState.CONVERTING
-        updateRecordingUi()
-        binding.root.postDelayed({
-            val csv = CsvExporter.build(TagSession.receivedRows, TagSession.includeSiUnits)
-            val bytes = csv.toByteArray(Charsets.UTF_8).size
-            TagSession.recordingState = RecordingState.SAVING
-            binding.recordStatus.text = "Saving CSV… ${CsvExporter.formatFileSize(bytes)}"
-            pendingCsv = csv
-            pendingFileName = fileName
-            binding.root.postDelayed({
-                saveLauncher.launch(fileName)
-            }, 400)
-        }, 400)
+    private fun exportLastRecording() {
+        val entry = TagSession.lastHistoryEntry
+        if (entry == null || !entry.csvFile.exists()) {
+            Toast.makeText(this, R.string.export_hint, Toast.LENGTH_SHORT).show()
+            return
+        }
+        pendingExportCsv = entry.csvFile.readText(Charsets.UTF_8)
+        pendingExportName = entry.csvFile.name
+        exportLauncher.launch(entry.csvFile.name)
     }
 
     private fun updateRecordingUi() {
         val state = TagSession.recordingState
         val isRunning = state == RecordingState.SYNCING || state == RecordingState.RECEIVING
 
-        binding.startBtn.isEnabled = !isRunning
+        binding.startBtn.isEnabled = !isRunning && state != RecordingState.SAVING
         binding.stopBtn.isEnabled = isRunning
         binding.saveBtn.visibility =
-            if (state == RecordingState.RECEIVED) View.VISIBLE else View.GONE
-        binding.saveBtn.isEnabled = state != RecordingState.SAVING
+            if (state == RecordingState.RECEIVED && TagSession.lastHistoryEntry != null) {
+                View.VISIBLE
+            } else {
+                View.GONE
+            }
+        binding.saveBtn.isEnabled = state == RecordingState.RECEIVED
 
         when (state) {
             RecordingState.IDLE -> {
                 binding.recordStatus.text = getString(R.string.status_ready)
                 binding.recordMeta.text =
-                    "Start sends mobile date/time to tag once. Tap Stop when finished receiving."
+                    "Start sends mobile date/time to tag once. Stop auto-saves CSV + log."
             }
             RecordingState.SYNCING -> {
                 binding.recordStatus.text = "Syncing mobile time to tag…"
@@ -244,18 +301,20 @@ class DeviceActivity : AppCompatActivity() {
                         "Rows: ${TagSession.receivedRows.size}"
             }
             RecordingState.RECEIVED -> {
-                val est = CsvExporter.build(TagSession.receivedRows, TagSession.includeSiUnits)
-                    .toByteArray(Charsets.UTF_8).size
                 binding.recordStatus.text =
                     "Received · ${TagSession.packetCount} packets"
                 binding.recordMeta.text =
-                    "Ready to save CSV (~${CsvExporter.formatFileSize(est)}). " +
-                        "Each row has date_time and timestamp_ms."
+                    TagSession.lastFeedbackText.ifBlank {
+                        "Auto-saved to History. Use Export for a copy."
+                    }
             }
             RecordingState.CONVERTING -> {
-                binding.recordStatus.text = "Converting raw data to CSV…"
+                binding.recordStatus.text = "Preparing files…"
             }
-            RecordingState.SAVING -> Unit
+            RecordingState.SAVING -> {
+                binding.recordStatus.text = "Saving CSV + log…"
+                binding.recordMeta.text = TagSession.lastFeedbackText
+            }
         }
     }
 

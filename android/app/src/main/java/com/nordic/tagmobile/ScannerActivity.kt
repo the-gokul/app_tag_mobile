@@ -18,6 +18,8 @@ import androidx.recyclerview.widget.RecyclerView
 import com.nordic.tagmobile.ble.TagBleManager
 import com.nordic.tagmobile.ble.TagBleScanner
 import com.nordic.tagmobile.databinding.ActivityScannerBinding
+import com.nordic.tagmobile.log.LogCategory
+import com.nordic.tagmobile.log.TagLogger
 import com.nordic.tagmobile.model.ConnectedDevice
 
 class ScannerActivity : AppCompatActivity() {
@@ -59,6 +61,7 @@ class ScannerActivity : AppCompatActivity() {
 
         override fun onError(message: String) {
             runOnUiThread {
+                TagLogger.log(LogCategory.ERRORS, "SCAN_ERROR", message)
                 Toast.makeText(this@ScannerActivity, message, Toast.LENGTH_SHORT).show()
             }
         }
@@ -68,6 +71,11 @@ class ScannerActivity : AppCompatActivity() {
         override fun onReady(device: BluetoothDevice) {
             runOnUiThread {
                 binding.connectingOverlay.visibility = View.GONE
+                TagLogger.log(
+                    LogCategory.BLE,
+                    "CONNECT_OK",
+                    "$pendingName ${device.address} rssi=$pendingRssi",
+                )
                 TagSession.connectedDevice = ConnectedDevice(
                     name = pendingName.ifBlank { device.name ?: "Tag" },
                     address = device.address,
@@ -90,6 +98,7 @@ class ScannerActivity : AppCompatActivity() {
         override fun onError(message: String) {
             runOnUiThread {
                 binding.connectingOverlay.visibility = View.GONE
+                TagLogger.log(LogCategory.ERRORS, "CONNECT_FAIL", message)
                 Toast.makeText(this@ScannerActivity, message, Toast.LENGTH_LONG).show()
                 bleScanner.start()
             }
@@ -116,6 +125,7 @@ class ScannerActivity : AppCompatActivity() {
     private fun startScanning() {
         bleManager.listener = bleListener
         bleScanner.listener = scanListener
+        TagLogger.log(LogCategory.BLE, "SCAN_START", "all BLE devices")
         bleScanner.start()
     }
 
@@ -125,6 +135,7 @@ class ScannerActivity : AppCompatActivity() {
         }
 
     override fun onDestroy() {
+        TagLogger.log(LogCategory.BLE, "SCAN_STOP", "devices_seen=${seen.size}")
         bleScanner.stop()
         super.onDestroy()
     }
@@ -135,6 +146,7 @@ class ScannerActivity : AppCompatActivity() {
         pendingRssi = rssi
         binding.connectingOverlay.visibility = View.VISIBLE
         bleScanner.stop()
+        TagLogger.log(LogCategory.BLE, "CONNECT_ATTEMPT", "$name ${device.address}")
         bleManager.connectTag(device)
     }
 

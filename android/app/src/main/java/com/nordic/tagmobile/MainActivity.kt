@@ -7,6 +7,8 @@ import android.location.LocationManager
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.view.Menu
+import android.view.MenuItem
 import android.view.View
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
@@ -14,6 +16,8 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import com.nordic.tagmobile.databinding.ActivityMainBinding
+import com.nordic.tagmobile.log.LogCategory
+import com.nordic.tagmobile.log.TagLogger
 
 class MainActivity : AppCompatActivity() {
 
@@ -23,12 +27,16 @@ class MainActivity : AppCompatActivity() {
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
     ) { grants ->
-        val bleOk = AppPermissions.ble().all { grants[it] != false &&
-            ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED }
+        val bleOk = AppPermissions.ble().all {
+            grants[it] != false &&
+                ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
+        }
         if (bleOk) {
-            if (pendingOpenScanner) ensureReadyAndScan() else Unit
+            TagLogger.log(LogCategory.APP, "PERMISSIONS_GRANTED", "BLE permissions OK")
+            if (pendingOpenScanner) ensureReadyAndScan()
         } else {
             pendingOpenScanner = false
+            TagLogger.log(LogCategory.ERRORS, "PERMISSIONS_DENIED", "BLE permissions denied")
             Toast.makeText(this, R.string.ble_permission_rationale, Toast.LENGTH_LONG).show()
         }
     }
@@ -52,6 +60,42 @@ class MainActivity : AppCompatActivity() {
             }
         }
         requestAppPermissionsOnLaunch()
+    }
+
+    override fun onCreateOptionsMenu(menu: Menu): Boolean {
+        menuInflater.inflate(R.menu.menu_main, menu)
+        return true
+    }
+
+    override fun onOptionsItemSelected(item: MenuItem): Boolean {
+        return when (item.itemId) {
+            R.id.action_settings -> {
+                startActivity(Intent(this, SettingsActivity::class.java))
+                true
+            }
+            R.id.action_logs -> {
+                startActivity(Intent(this, LogViewerActivity::class.java))
+                true
+            }
+            R.id.action_history -> {
+                startActivity(Intent(this, HistoryActivity::class.java))
+                true
+            }
+            R.id.action_about -> {
+                val version = try {
+                    packageManager.getPackageInfo(packageName, 0).versionName
+                } catch (_: Exception) {
+                    "?"
+                }
+                AlertDialog.Builder(this)
+                    .setTitle(R.string.about)
+                    .setMessage(getString(R.string.about_message, version))
+                    .setPositiveButton(android.R.string.ok, null)
+                    .show()
+                true
+            }
+            else -> super.onOptionsItemSelected(item)
+        }
     }
 
     override fun onResume() {
@@ -98,6 +142,7 @@ class MainActivity : AppCompatActivity() {
             return
         }
         pendingOpenScanner = false
+        TagLogger.log(LogCategory.BLE, "SCAN_OPEN", "Opening scanner")
         startActivity(Intent(this, ScannerActivity::class.java))
     }
 
