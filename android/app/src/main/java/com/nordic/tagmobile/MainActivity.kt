@@ -3,7 +3,10 @@ package com.nordic.tagmobile
 import android.bluetooth.BluetoothAdapter
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.location.LocationManager
+import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.view.View
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
@@ -20,25 +23,20 @@ class MainActivity : AppCompatActivity() {
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
     ) { grants ->
-        val bleOk = AppPermissions.ble().all { grants[it] == true }
+        val bleOk = AppPermissions.ble().all { grants[it] != false &&
+            ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED }
         if (bleOk) {
-            ensureBluetoothEnabled()
+            if (pendingOpenScanner) ensureReadyAndScan() else Unit
         } else {
-            Toast.makeText(this, R.string.ble_permission_rationale, Toast.LENGTH_LONG).show()
             pendingOpenScanner = false
+            Toast.makeText(this, R.string.ble_permission_rationale, Toast.LENGTH_LONG).show()
         }
     }
 
     private val enableBluetoothLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
     ) {
-        if (pendingOpenScanner && TagApp.instance.bleManager.isBluetoothEnabled()) {
-            pendingOpenScanner = false
-            startActivity(Intent(this, ScannerActivity::class.java))
-        } else if (pendingOpenScanner) {
-            pendingOpenScanner = false
-            Toast.makeText(this, R.string.bluetooth_required, Toast.LENGTH_LONG).show()
-        }
+        if (pendingOpenScanner) ensureReadyAndScan()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -48,13 +46,11 @@ class MainActivity : AppCompatActivity() {
         setSupportActionBar(binding.toolbar)
 
         binding.scanFab.setOnClickListener { beginScanFlow() }
-
         binding.connectedCard.setOnClickListener {
             if (TagSession.isConnected()) {
                 startActivity(Intent(this, DeviceActivity::class.java))
             }
         }
-
         requestAppPermissionsOnLaunch()
     }
 
@@ -67,40 +63,51 @@ class MainActivity : AppCompatActivity() {
         val missing = AppPermissions.all().filter {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }
-        if (missing.isNotEmpty()) {
-            AlertDialog.Builder(this)
-                .setTitle(R.string.permissions_title)
-                .setMessage(R.string.permissions_message)
-                .setPositiveButton(R.string.grant_permissions) { _, _ ->
-                    permissionLauncher.launch(missing.toTypedArray())
-                }
-                .setNegativeButton(android.R.string.cancel, null)
-                .show()
-        }
+        if (missing.isEmpty()) return
+        AlertDialog.Builder(this)
+            .setTitle(R.string.permissions_title)
+            .setMessage(R.string.permissions_message)
+            .setPositiveButton(R.string.grant_permissions) { _, _ ->
+                permissionLauncher.launch(missing.toTypedArray())
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
     }
 
     private fun beginScanFlow() {
-        val missingBle = AppPermissions.ble().filter {
+        pendingOpenScanner = true
+        val missing = AppPermissions.ble().filter {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }
-        if (missingBle.isNotEmpty()) {
-            permissionLauncher.launch(missingBle.toTypedArray())
-            pendingOpenScanner = true
+        if (missing.isNotEmpty()) {
+            permissionLauncher.launch(missing.toTypedArray())
             return
         }
-        ensureBluetoothEnabled(andOpenScanner = true)
+        ensureReadyAndScan()
     }
 
-    private fun ensureBluetoothEnabled(andOpenScanner: Boolean = false) {
-        if (andOpenScanner) pendingOpenScanner = true
-        if (TagApp.instance.bleManager.isBluetoothEnabled()) {
-            if (pendingOpenScanner) {
-                pendingOpenScanner = false
-                startActivity(Intent(this, ScannerActivity::class.java))
-            }
+    private fun ensureReadyAndScan() {
+        if (!TagApp.instance.bleManager.isBluetoothEnabled) {
+            enableBluetoothLauncher.launch(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE))
             return
         }
-        enableBluetoothLauncher.launch(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE))
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S && !isLocationEnabled()) {
+            Toast.makeText(this, R.string.location_required, Toast.LENGTH_LONG).show()
+            startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+            return
+        }
+        pendingOpenScanner = false
+        startActivity(Intent(this, ScannerActivity::class.java))
+    }
+
+    private fun isLocationEnabled(): Boolean {
+        val lm = getSystemService(LOCATION_SERVICE) as LocationManager
+        return try {
+            lm.isProviderEnabled(LocationManager.GPS_PROVIDER) ||
+                lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER)
+        } catch (_: Exception) {
+            true
+        }
     }
 
     private fun renderHome() {

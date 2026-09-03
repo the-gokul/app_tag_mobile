@@ -24,7 +24,6 @@ object SensorPacketParser {
     const val STOP_BYTE = 0x5A
     const val VERSION = 8
     const val HEADER_SIZE = 18
-    const val READING_SIZE = 19
     const val SAMPLE_WIRE_SIZE = 21
     const val MAX_SAMPLES = 10
 
@@ -44,8 +43,7 @@ object SensorPacketParser {
         val firstSampleNumber = buf.int.toLong() and 0xFFFFFFFFL
         val baseTimestampMs = buf.int.toLong() and 0xFFFFFFFFL
 
-        val trailerIndex = data.size - 1
-        if ((data[trailerIndex].toInt() and 0xFF) != STOP_BYTE) return null
+        if ((data[data.size - 1].toInt() and 0xFF) != STOP_BYTE) return null
 
         val sampleCount = (data.size - HEADER_SIZE - 1) / SAMPLE_WIRE_SIZE
         if (sampleCount < 1 || sampleCount > MAX_SAMPLES) return null

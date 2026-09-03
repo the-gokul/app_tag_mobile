@@ -53,7 +53,7 @@ class CustomDataActivity : AppCompatActivity() {
                     Toast.LENGTH_SHORT,
                 ).show()
                 finish()
-            }, 1200)
+            }, 800)
         }
     }
 

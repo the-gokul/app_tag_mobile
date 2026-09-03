@@ -1,31 +1,14 @@
-# Tag Mobile — Android App
+# Tag Mobile — Android
 
-Native Android app matching `preview_home.html`.
+UI from `preview_home.html`. BLE via Nordic Maven libraries:
 
-## Open & run
+- `no.nordicsemi.android:ble-ktx`
+- `no.nordicsemi.android.support.v18:scanner`
 
-1. Android Studio → **Open** → `C:\nordic\v\app_tag_mobile\android`
-2. Gradle sync → Run on phone (USB debugging)
+## Behavior
 
-## Screens
+1. **Scan** — lists **all** nearby BLE devices (no name filter).
+2. **Connect** — succeeds only if TAG_STREAM GATT is present.
+3. **Start / Stop / Save** — START+time sync, STOP, CSV with `timestamp_ms` + `date_time`.
 
-| Screen | Activity |
-|--------|----------|
-| Home (connected devices) | `MainActivity` |
-| Scanner | `ScannerActivity` |
-| Device (Start / Stop / Save) | `DeviceActivity` |
-| Custom data + CSV format | `CustomDataActivity` |
-
-## Flow
-
-1. **+ Scan** → pick Tag device → connect
-2. **Start** → sends START + mobile time to tag → receives v8 packets
-3. **Stop** → sends STOP → **Save** appears
-4. **Save** → name prompt → pick folder → `.csv` with `timestamp_ms` + `date_time`
-
-## BLE
-
-See `IMPLEMENTATION_PLAN.md` for UUIDs and protocol.
-
-**Note:** Custom data settings are stored in the app until tag firmware TAG_CONFIG (Phase 2) is added.
-
+Build APK with GitHub Actions (see `BUILD_APK_GITHUB.md`).

@@ -4,7 +4,6 @@ import android.Manifest
 import android.os.Build
 
 object AppPermissions {
-    /** Permissions required for BLE scan and connect. */
     fun ble(): Array<String> =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             arrayOf(
@@ -12,20 +11,14 @@ object AppPermissions {
                 Manifest.permission.BLUETOOTH_CONNECT,
             )
         } else {
-            buildList {
-                add(Manifest.permission.ACCESS_FINE_LOCATION)
-                add(Manifest.permission.ACCESS_COARSE_LOCATION)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    add(Manifest.permission.BLUETOOTH)
-                    add(Manifest.permission.BLUETOOTH_ADMIN)
-                }
-            }.toTypedArray()
+            arrayOf(
+                Manifest.permission.ACCESS_FINE_LOCATION,
+                Manifest.permission.ACCESS_COARSE_LOCATION,
+                Manifest.permission.BLUETOOTH,
+                Manifest.permission.BLUETOOTH_ADMIN,
+            )
         }
 
-    /**
-     * Optional legacy storage (Android 9 and below). CSV save uses the system file
-     * picker on newer Android and does not need storage permission.
-     */
     fun legacyStorage(): Array<String> =
         if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
             arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE)
@@ -33,5 +26,6 @@ object AppPermissions {
             emptyArray()
         }
 
-    fun all(): Array<String> = (ble().toList() + legacyStorage().toList()).distinct().toTypedArray()
+    fun all(): Array<String> =
+        (ble().toList() + legacyStorage().toList()).distinct().toTypedArray()
 }

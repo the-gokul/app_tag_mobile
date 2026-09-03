@@ -1,216 +1,143 @@
 package com.nordic.tagmobile.ble
 
-import android.annotation.SuppressLint
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
-import android.bluetooth.BluetoothGattCallback
 import android.bluetooth.BluetoothGattCharacteristic
-import android.bluetooth.BluetoothGattDescriptor
-import android.bluetooth.BluetoothManager
-import android.bluetooth.BluetoothProfile
-import android.bluetooth.le.ScanCallback
-import android.bluetooth.le.ScanResult
-import android.bluetooth.le.ScanSettings
 import android.content.Context
-import android.os.Build
-import android.os.ParcelUuid
 import com.nordic.tagmobile.protocol.TagCommand
 import com.nordic.tagmobile.protocol.TagUuids
+import no.nordicsemi.android.ble.BleManager
+import no.nordicsemi.android.ble.observer.ConnectionObserver
+import no.nordicsemi.android.ble.data.Data
 import java.util.UUID
 
-class TagBleManager(context: Context) {
+/**
+ * Nordic BleManager for Tag GATT: MTU, discover, notify, START/STOP writes.
+ */
+class TagBleManager(context: Context) : BleManager(context) {
 
     interface Listener {
-        fun onScanResult(device: BluetoothDevice, rssi: Int, displayName: String) {}
-        fun onConnected(device: BluetoothDevice) {}
-        fun onDisconnected() {}
-        fun onPacketReceived(data: ByteArray) {}
-        fun onError(message: String) {}
+        fun onReady(device: BluetoothDevice)
+        fun onDisconnected()
+        fun onPacket(data: ByteArray)
+        fun onError(message: String)
     }
 
     var listener: Listener? = null
 
-    private val appContext = context.applicationContext
-    private val bluetoothManager =
-        appContext.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
-    private val adapter = bluetoothManager.adapter
-
-    private var gatt: BluetoothGatt? = null
-    private var commandChar: BluetoothGattCharacteristic? = null
-    private var notifyChar: BluetoothGattCharacteristic? = null
-    private var syncBaseUnixMs: Long = 0L
-    private var pendingConnectDevice: BluetoothDevice? = null
-
-    private val streamServiceUuid = UUID.fromString(TagUuids.STREAM_SERVICE)
-    private val sensorDataUuid = UUID.fromString(TagUuids.SENSOR_DATA)
+    private val streamUuid = UUID.fromString(TagUuids.STREAM_SERVICE)
+    private val sensorUuid = UUID.fromString(TagUuids.SENSOR_DATA)
     private val commandUuid = UUID.fromString(TagUuids.COMMAND)
-    private val cccUuid = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 
-    val isConnected: Boolean get() = gatt != null && commandChar != null
+    private var sensorChar: BluetoothGattCharacteristic? = null
+    private var commandChar: BluetoothGattCharacteristic? = null
+    private var ready = false
 
-    private val streamServiceParcel = ParcelUuid(streamServiceUuid)
+    val isTagReady: Boolean get() = ready && isConnected
 
-    private fun isTagAdvertisement(result: ScanResult): Boolean {
-        val name = result.scanRecord?.deviceName ?: result.device.name
-        if (!name.isNullOrBlank() && name.startsWith("Tag", ignoreCase = true)) {
-            return true
-        }
-        val uuids = result.scanRecord?.serviceUuids ?: return false
-        return uuids.any { it == streamServiceParcel }
-    }
+    init {
+        setConnectionObserver(object : ConnectionObserver {
+            override fun onDeviceConnecting(device: BluetoothDevice) = Unit
+            override fun onDeviceConnected(device: BluetoothDevice) = Unit
+            override fun onDeviceFailedToConnect(device: BluetoothDevice, reason: Int) {
+                ready = false
+                val msg = when (reason) {
+                    ConnectionObserver.REASON_NOT_SUPPORTED ->
+                        "Not a Tag device (TAG_STREAM missing)"
+                    ConnectionObserver.REASON_TIMEOUT ->
+                        "Connect timed out"
+                    else ->
+                        "Connect failed ($reason)"
+                }
+                listener?.onError(msg)
+            }
 
-    private val scanCallback = object : ScanCallback() {
-        override fun onScanResult(callbackType: Int, result: ScanResult) {
-            val device = result.device ?: return
-            if (!isTagAdvertisement(result)) return
-            val displayName = result.scanRecord?.deviceName
-                ?: result.device.name
-                ?: "Tag"
-            listener?.onScanResult(device, result.rssi, displayName)
-        }
-
-        override fun onScanFailed(errorCode: Int) {
-            listener?.onError("BLE scan failed: $errorCode")
-        }
-    }
-
-    private val gattCallback = object : BluetoothGattCallback() {
-        override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
-            if (newState == BluetoothProfile.STATE_CONNECTED) {
-                gatt.requestMtu(247)
-            } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+            override fun onDeviceReady(device: BluetoothDevice) = Unit
+            override fun onDeviceDisconnecting(device: BluetoothDevice) = Unit
+            override fun onDeviceDisconnected(device: BluetoothDevice, reason: Int) {
+                ready = false
                 listener?.onDisconnected()
-                closeGattOnly()
             }
-        }
+        })
+    }
 
-        override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
-            gatt.discoverServices()
-        }
-
-        override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
-            if (status != BluetoothGatt.GATT_SUCCESS) {
-                listener?.onError("Service discovery failed")
-                return
-            }
-            val service = gatt.getService(streamServiceUuid) ?: run {
-                listener?.onError("TAG_STREAM service not found")
-                return
-            }
-            notifyChar = service.getCharacteristic(sensorDataUuid)
+    override fun getGattCallback(): BleManagerGattCallback = object : BleManagerGattCallback() {
+        override fun isRequiredServiceSupported(gatt: BluetoothGatt): Boolean {
+            val service = gatt.getService(streamUuid) ?: return false
+            sensorChar = service.getCharacteristic(sensorUuid)
             commandChar = service.getCharacteristic(commandUuid)
-            if (notifyChar == null || commandChar == null) {
-                listener?.onError("Missing GATT characteristics")
-                return
+            val sensorOk = sensorChar != null &&
+                (sensorChar!!.properties and BluetoothGattCharacteristic.PROPERTY_NOTIFY) != 0
+            val cmdOk = commandChar != null &&
+                (
+                    (commandChar!!.properties and BluetoothGattCharacteristic.PROPERTY_WRITE) != 0 ||
+                        (commandChar!!.properties and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE) != 0
+                    )
+            return sensorOk && cmdOk
+        }
+
+        override fun initialize() {
+            requestMtu(247).enqueue()
+            setNotificationCallback(sensorChar).with { _, data ->
+                val bytes = data.value ?: return@with
+                listener?.onPacket(bytes)
             }
-            enableNotifications(gatt, notifyChar!!)
+            enableNotifications(sensorChar)
+                .fail { _, status ->
+                    ready = false
+                    listener?.onError("Notify enable failed ($status)")
+                }
+                .done {
+                    ready = true
+                    bluetoothDevice?.let { listener?.onReady(it) }
+                }
+                .enqueue()
         }
 
-        override fun onDescriptorWrite(
-            gatt: BluetoothGatt,
-            descriptor: BluetoothGattDescriptor,
-            status: Int,
-        ) {
-            if (status == BluetoothGatt.GATT_SUCCESS) {
-                listener?.onConnected(gatt.device)
-            }
-        }
-
-        @Deprecated("Deprecated in Java")
-        override fun onCharacteristicChanged(
-            gatt: BluetoothGatt,
-            characteristic: BluetoothGattCharacteristic,
-        ) {
-            val data = characteristic.value ?: return
-            listener?.onPacketReceived(data)
-        }
-
-        override fun onCharacteristicChanged(
-            gatt: BluetoothGatt,
-            characteristic: BluetoothGattCharacteristic,
-            value: ByteArray,
-        ) {
-            listener?.onPacketReceived(value)
+        override fun onServicesInvalidated() {
+            ready = false
+            sensorChar = null
+            commandChar = null
         }
     }
 
-    fun isBluetoothEnabled(): Boolean = adapter?.isEnabled == true
-
-    @SuppressLint("MissingPermission")
-    fun startScan() {
-        val scanner = adapter?.bluetoothLeScanner ?: run {
-            listener?.onError("Bluetooth scanner unavailable")
-            return
-        }
-        val settings = ScanSettings.Builder()
-            .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
-            .build()
-        scanner.startScan(null, settings, scanCallback)
+    fun connectTag(device: BluetoothDevice) {
+        ready = false
+        connect(device)
+            .retry(3, 100)
+            .useAutoConnect(false)
+            .timeout(15_000)
+            .enqueue()
     }
 
-    @SuppressLint("MissingPermission")
-    fun stopScan() {
-        adapter?.bluetoothLeScanner?.stopScan(scanCallback)
+    fun disconnectTag() {
+        disconnect().enqueue()
+        ready = false
     }
 
-    @SuppressLint("MissingPermission")
-    fun connect(device: BluetoothDevice) {
-        stopScan()
-        closeGattOnly()
-        pendingConnectDevice = device
-        gatt = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            device.connectGatt(appContext, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
-        } else {
-            device.connectGatt(appContext, false, gattCallback)
-        }
-    }
-
-    @SuppressLint("MissingPermission")
-    fun disconnect() {
-        gatt?.disconnect()
-        closeGattOnly()
-    }
-
-    @SuppressLint("MissingPermission")
-    fun startRecording() {
-        syncBaseUnixMs = System.currentTimeMillis()
-        writeCommand(TagCommand.startPayload(syncBaseUnixMs))
-    }
-
-    @SuppressLint("MissingPermission")
-    fun stopRecording() {
-        writeCommand(TagCommand.stopPayload())
-    }
-
-    fun syncBaseTimeMs(): Long = syncBaseUnixMs
-
-    @SuppressLint("MissingPermission")
-    private fun writeCommand(payload: ByteArray) {
-        val char = commandChar ?: run {
+    fun startRecording(unixMs: Long) {
+        val char = commandChar
+        if (char == null || !ready) {
             listener?.onError("Not connected")
             return
         }
-        char.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-        char.value = payload
-        if (gatt?.writeCharacteristic(char) != true) {
-            listener?.onError("Command write failed")
-        }
+        writeCharacteristic(
+            char,
+            Data(TagCommand.startPayload(unixMs)),
+            BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT,
+        )
+            .fail { _, status -> listener?.onError("START failed ($status)") }
+            .enqueue()
     }
 
-    @SuppressLint("MissingPermission")
-    private fun enableNotifications(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
-        gatt.setCharacteristicNotification(characteristic, true)
-        val ccc = characteristic.getDescriptor(cccUuid) ?: return
-        ccc.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-        gatt.writeDescriptor(ccc)
-    }
-
-    @SuppressLint("MissingPermission")
-    private fun closeGattOnly() {
-        gatt?.close()
-        gatt = null
-        commandChar = null
-        notifyChar = null
-        pendingConnectDevice = null
+    fun stopRecording() {
+        val char = commandChar ?: return
+        writeCharacteristic(
+            char,
+            Data(TagCommand.stopPayload()),
+            BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT,
+        )
+            .fail { _, status -> listener?.onError("STOP failed ($status)") }
+            .enqueue()
     }
 }

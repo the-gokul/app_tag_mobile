@@ -12,11 +12,12 @@
     <string name="stop">Stop</string>
     <string name="save">Save</string>
     <string name="status_ready">Ready</string>
-    <string name="status_receiving">Receiving…</string>
     <string name="ble_permission_rationale">Bluetooth permission is required to scan and connect to tags.</string>
     <string name="permissions_title">Permissions needed</string>
-    <string name="permissions_message">Tag needs Bluetooth to find and connect to your sensor tag.\n\nOn Android 11 and below, Location is also required for BLE scanning (the app does not track your location).\n\nCSV files are saved with the system file picker — no broad storage access on modern Android.</string>
+    <string name="permissions_message">Tag needs Bluetooth to find nearby BLE devices.\n\nOn Android 11 and below, Location must also be allowed and turned ON for BLE scanning (the app does not track your location).</string>
     <string name="grant_permissions">Grant</string>
-    <string name="bluetooth_required">Turn on Bluetooth to scan for tags.</string>
-    <string name="scanning_for_tags">Scanning for Tag devices…\n\nMake sure the tag is powered on and nearby.</string>
+    <string name="bluetooth_required">Turn on Bluetooth to scan.</string>
+    <string name="location_required">Turn on Location (required for BLE scan on Android 11).</string>
+    <string name="scanning_for_tags">Scanning all nearby BLE devices…\n\nAny BLE device will appear. Only Tag GATT will connect successfully.</string>
+    <string name="devices_found">%d devices</string>
 </resources>

@@ -16,6 +16,7 @@ import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.nordic.tagmobile.ble.TagBleManager
+import com.nordic.tagmobile.ble.TagBleScanner
 import com.nordic.tagmobile.databinding.ActivityScannerBinding
 import com.nordic.tagmobile.model.ConnectedDevice
 
@@ -23,8 +24,11 @@ class ScannerActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityScannerBinding
     private val bleManager get() = TagApp.instance.bleManager
-    private val adapter = DeviceAdapter { device, rssi -> connectTo(device, rssi) }
+    private val bleScanner get() = TagApp.instance.bleScanner
+    private val adapter = DeviceAdapter { device, rssi, name -> connectTo(device, rssi, name) }
     private val seen = LinkedHashMap<String, ScanEntry>()
+    private var pendingName = "Tag"
+    private var pendingRssi = -999
 
     private data class ScanEntry(
         val device: BluetoothDevice,
@@ -32,22 +36,42 @@ class ScannerActivity : AppCompatActivity() {
         val displayName: String,
     )
 
-    private val bleListener = object : TagBleManager.Listener {
-        override fun onScanResult(device: BluetoothDevice, rssi: Int, displayName: String) {
+    private val permissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { grants ->
+        if (AppPermissions.ble().all { grants[it] == true }) {
+            startScanning()
+        } else {
+            Toast.makeText(this, R.string.ble_permission_rationale, Toast.LENGTH_LONG).show()
+            finish()
+        }
+    }
+
+    private val scanListener = object : TagBleScanner.Listener {
+        override fun onDevice(device: BluetoothDevice, rssi: Int, name: String) {
             runOnUiThread {
-                seen[device.address] = ScanEntry(device, rssi, displayName)
-                adapter.submit(seen.values.toList())
+                seen[device.address] = ScanEntry(device, rssi, name)
+                adapter.submit(seen.values.toList().sortedByDescending { it.rssi })
                 binding.emptyScanState.visibility = View.GONE
+                binding.scanCount.text = getString(R.string.devices_found, seen.size)
             }
         }
 
-        override fun onConnected(device: BluetoothDevice) {
+        override fun onError(message: String) {
+            runOnUiThread {
+                Toast.makeText(this@ScannerActivity, message, Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private val bleListener = object : TagBleManager.Listener {
+        override fun onReady(device: BluetoothDevice) {
             runOnUiThread {
                 binding.connectingOverlay.visibility = View.GONE
                 TagSession.connectedDevice = ConnectedDevice(
-                    name = device.name ?: "Tag",
+                    name = pendingName.ifBlank { device.name ?: "Tag" },
                     address = device.address,
-                    rssi = seen[device.address]?.rssi ?: -999,
+                    rssi = pendingRssi,
                 )
                 TagSession.resetRecording()
                 startActivity(Intent(this@ScannerActivity, DeviceActivity::class.java))
@@ -61,23 +85,14 @@ class ScannerActivity : AppCompatActivity() {
             }
         }
 
+        override fun onPacket(data: ByteArray) = Unit
+
         override fun onError(message: String) {
             runOnUiThread {
                 binding.connectingOverlay.visibility = View.GONE
-                Toast.makeText(this@ScannerActivity, message, Toast.LENGTH_SHORT).show()
+                Toast.makeText(this@ScannerActivity, message, Toast.LENGTH_LONG).show()
+                bleScanner.start()
             }
-        }
-    }
-
-    private val permissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions(),
-    ) { grants ->
-        if (AppPermissions.ble().all { grants[it] == true }) {
-            bleManager.listener = bleListener
-            bleManager.startScan()
-        } else {
-            Toast.makeText(this, R.string.ble_permission_rationale, Toast.LENGTH_LONG).show()
-            finish()
         }
     }
 
@@ -89,18 +104,19 @@ class ScannerActivity : AppCompatActivity() {
         binding.backBtn.setOnClickListener { finish() }
         binding.deviceList.layoutManager = LinearLayoutManager(this)
         binding.deviceList.adapter = adapter
+        binding.scanCount.text = getString(R.string.devices_found, 0)
 
         if (!hasBlePermissions()) {
-            permissionLauncher.launch(
-                AppPermissions.ble().filter {
-                    ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
-                }.toTypedArray(),
-            )
+            permissionLauncher.launch(AppPermissions.ble())
             return
         }
+        startScanning()
+    }
 
+    private fun startScanning() {
         bleManager.listener = bleListener
-        bleManager.startScan()
+        bleScanner.listener = scanListener
+        bleScanner.start()
     }
 
     private fun hasBlePermissions(): Boolean =
@@ -109,20 +125,21 @@ class ScannerActivity : AppCompatActivity() {
         }
 
     override fun onDestroy() {
-        bleManager.stopScan()
+        bleScanner.stop()
         super.onDestroy()
     }
 
     @SuppressLint("MissingPermission")
-    private fun connectTo(device: BluetoothDevice, rssi: Int) {
+    private fun connectTo(device: BluetoothDevice, rssi: Int, name: String) {
+        pendingName = name
+        pendingRssi = rssi
         binding.connectingOverlay.visibility = View.VISIBLE
-        bleManager.stopScan()
-        bleManager.connect(device)
-        seen[device.address] = ScanEntry(device, rssi, device.name ?: "Tag")
+        bleScanner.stop()
+        bleManager.connectTag(device)
     }
 
     private class DeviceAdapter(
-        private val onClick: (BluetoothDevice, Int) -> Unit,
+        private val onClick: (BluetoothDevice, Int, String) -> Unit,
     ) : RecyclerView.Adapter<DeviceAdapter.Holder>() {
 
         private var items: List<ScanEntry> = emptyList()
@@ -143,7 +160,9 @@ class ScannerActivity : AppCompatActivity() {
             holder.name.text = item.displayName
             holder.mac.text = item.device.address
             holder.rssi.text = "${item.rssi} dBm"
-            holder.itemView.setOnClickListener { onClick(item.device, item.rssi) }
+            holder.itemView.setOnClickListener {
+                onClick(item.device, item.rssi, item.displayName)
+            }
         }
 
         override fun getItemCount(): Int = items.size

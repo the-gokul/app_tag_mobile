@@ -25,4 +25,12 @@ object TagSession {
     }
 
     fun isConnected(): Boolean = connectedDevice != null
+
+    fun clearConnection() {
+        connectedDevice = null
+        resetRecording()
+        customDataEnabled = false
+        includeSiUnits = false
+        deviceConfig = DeviceConfig.default()
+    }
 }

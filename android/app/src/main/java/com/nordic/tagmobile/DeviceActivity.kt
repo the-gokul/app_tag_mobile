@@ -9,6 +9,7 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import com.nordic.tagmobile.ble.TagBleManager
 import com.nordic.tagmobile.databinding.ActivityDeviceBinding
+import com.nordic.tagmobile.model.DeviceConfig
 import com.nordic.tagmobile.model.RecordingState
 import com.nordic.tagmobile.protocol.CsvExporter
 import com.nordic.tagmobile.protocol.SensorPacketParser
@@ -54,16 +55,17 @@ class DeviceActivity : AppCompatActivity() {
     }
 
     private val bleListener = object : TagBleManager.Listener {
+        override fun onReady(device: android.bluetooth.BluetoothDevice) = Unit
+
         override fun onDisconnected() {
             runOnUiThread {
-                TagSession.connectedDevice = null
-                TagSession.resetRecording()
+                TagSession.clearConnection()
                 Toast.makeText(this@DeviceActivity, "Disconnected", Toast.LENGTH_SHORT).show()
                 finish()
             }
         }
 
-        override fun onPacketReceived(data: ByteArray) {
+        override fun onPacket(data: ByteArray) {
             if (TagSession.recordingState != RecordingState.RECEIVING) return
             if (TagSession.tagUptimeAtSync == null && data.size >= HEADER_SIZE) {
                 val buf = java.nio.ByteBuffer.wrap(data)
@@ -104,29 +106,24 @@ class DeviceActivity : AppCompatActivity() {
         binding.deviceTitle.text = device.name
         binding.backBtn.setOnClickListener { finish() }
         binding.disconnectBtn.setOnClickListener {
-            bleManager.disconnect()
-            TagSession.connectedDevice = null
-            TagSession.resetRecording()
+            bleManager.disconnectTag()
+            TagSession.clearConnection()
             finish()
         }
-
         binding.customDataRow.setOnClickListener {
             startActivity(Intent(this, CustomDataActivity::class.java))
         }
-
         binding.infoBtn.setOnClickListener { showDeviceInfo() }
-
         binding.customDataToggle.setOnCheckedChangeListener { _, checked ->
             if (checked) {
                 binding.customDataToggle.isChecked = false
                 startActivity(Intent(this, CustomDataActivity::class.java))
             } else {
                 TagSession.customDataEnabled = false
-                TagSession.deviceConfig = com.nordic.tagmobile.model.DeviceConfig.default()
+                TagSession.deviceConfig = DeviceConfig.default()
                 updateCustomDataLabel()
             }
         }
-
         binding.startBtn.setOnClickListener { startRecording() }
         binding.stopBtn.setOnClickListener { stopRecording() }
         binding.saveBtn.setOnClickListener { saveRecording() }
@@ -149,7 +146,7 @@ class DeviceActivity : AppCompatActivity() {
     }
 
     private fun startRecording() {
-        if (!bleManager.isConnected) {
+        if (!bleManager.isTagReady) {
             Toast.makeText(this, "Not connected", Toast.LENGTH_SHORT).show()
             return
         }
@@ -159,7 +156,7 @@ class DeviceActivity : AppCompatActivity() {
         TagSession.recordingState = RecordingState.SYNCING
         updateRecordingUi()
         TagSession.syncBaseUnixMs = System.currentTimeMillis()
-        bleManager.startRecording()
+        bleManager.startRecording(TagSession.syncBaseUnixMs)
         binding.root.postDelayed({
             if (TagSession.recordingState == RecordingState.SYNCING) {
                 TagSession.recordingState = RecordingState.RECEIVING
@@ -258,15 +255,13 @@ class DeviceActivity : AppCompatActivity() {
             RecordingState.CONVERTING -> {
                 binding.recordStatus.text = "Converting raw data to CSV…"
             }
-            RecordingState.SAVING -> {
-                // text set in beginSave
-            }
+            RecordingState.SAVING -> Unit
         }
     }
 
     private fun showDeviceInfo() {
         val cfg = if (TagSession.customDataEnabled) TagSession.deviceConfig
-        else com.nordic.tagmobile.model.DeviceConfig.default()
+        else DeviceConfig.default()
         val device = TagSession.connectedDevice ?: return
         val msg = buildString {
             appendLine(device.name)

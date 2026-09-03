@@ -25,14 +25,28 @@
                 android:src="@drawable/ic_back"
                 android:contentDescription="Back" />
 
-            <TextView
-                android:layout_width="wrap_content"
+            <LinearLayout
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:text="Scanner"
-                android:textColor="@android:color/white"
-                android:textSize="20sp"
-                android:textStyle="bold"
-                android:layout_marginStart="4dp" />
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:layout_marginStart="4dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Scanner"
+                    android:textColor="@android:color/white"
+                    android:textSize="20sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/scanCount"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="#E0F7FA"
+                    android:textSize="12sp" />
+            </LinearLayout>
         </LinearLayout>
 
         <FrameLayout
