@@ -87,7 +87,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun ensureReadyAndScan() {
-        if (!TagApp.instance.bleManager.isBluetoothEnabled) {
+        val adapter = BluetoothAdapter.getDefaultAdapter()
+        if (adapter == null || !adapter.isEnabled) {
             enableBluetoothLauncher.launch(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE))
             return
         }
